@@ -1,38 +1,31 @@
 /**
  * @file src/App.tsx
- * @description Onigiri Quantum (Oni-Q) メインアプリケーション
- * - Firebase Authentication / Google サインイン連携
- * - Cloud Firestore による「人生（Life）」と世界線の永続化
- * - ダミーデータを排除し、START MY LIFE からユーザー自身の最初の決断テーマで世界線を創成
- * - 過去の人生一覧からの世界線再開（Resume）
- * - アカウント連携解除・全データ物理削除（退会）
+ * @description Onigiri Quantum (Oni-Q) メインアプリケーション（ローカル完結型アーキテクチャ）
+ * - 外部サーバー/Firebase依存を完全排除し、端末内 localStorage で安全に稼働
+ * - 画面ルーティング管理（currentView: 'title' | 'space', currentLifeId: string | null）
+ * - START MY LIFE からの初期量子創成 ＆ 過去の世界線再開（Resume）
+ * - 量子観測（決断の確定）、IF世界線の追跡、多重世界線シミュレーション
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { User } from 'firebase/auth';
 import {
   QuantumWorldLine,
   OnigiriNode,
   QuantumBranch,
   QuantumLog,
   QuantumEntanglement,
-  LifeRecord,
 } from './types/quantum';
 import {
-  subscribeAuthState,
-  signInWithGoogle,
-  signOutUser,
-  deleteAccountAndData,
-  incrementUserQuantums,
-  UserProfile,
-} from './services/authService';
-import {
-  getUserLives,
-  createNewLife,
-  loadLifeWorldLine,
-  saveLifeWorldLine,
-  deleteUserLife,
-} from './services/lifeService';
+  Life,
+  loadLives,
+  saveLife,
+  getLifeById,
+  deleteLife,
+  clearAllData,
+  createNewLifeRecord,
+  getActiveLifeId,
+  setActiveLifeId,
+} from './services/storageService';
 import { Header } from './components/Header';
 import { CosmicCanvas, getBranchLayout } from './components/CosmicCanvas';
 import { ObservationModal } from './components/ObservationModal';
@@ -42,24 +35,20 @@ import { EntanglementModal } from './components/EntanglementModal';
 import { GuideModal } from './components/GuideModal';
 import { TitleScreen } from './components/TitleScreen';
 import { NewLifeModal } from './components/NewLifeModal';
-import { DeleteAccountModal } from './components/DeleteAccountModal';
 
 export default function App() {
-  // 認証ステータス
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  // 画面ルーティング状態
+  const [currentView, setCurrentView] = useState<'title' | 'space'>('title');
+  const [currentLifeId, setCurrentLifeId] = useState<string | null>(null);
+  const [currentLifeTitle, setCurrentLifeTitle] = useState<string>('');
 
-  // 人生（Life）管理ステータス
-  const [userLives, setUserLives] = useState<LifeRecord[]>([]);
-  const [isLoadingLives, setIsLoadingLives] = useState(false);
-  const [activeLifeId, setActiveLifeId] = useState<string | null>(null);
-  const [activeLifeTitle, setActiveLifeTitle] = useState<string>('');
+  // 人生（Life）データリスト
+  const [lives, setLives] = useState<Life[]>([]);
 
   // 現在表示中の世界線
   const [worldLine, setWorldLine] = useState<QuantumWorldLine>({
-    userId: '',
-    userName: '',
+    userId: 'local-observer',
+    userName: 'ローカル観測者',
     totalQuanta: 0,
     nodes: [],
     logs: [],
@@ -73,62 +62,50 @@ export default function App() {
 
   // モーダル表示状態
   const [isNewLifeModalOpen, setIsNewLifeModalOpen] = useState(false);
-  const [isDeleteAccountModalOpen, setIsDeleteAccountModalOpen] = useState(false);
   const [observationNode, setObservationNode] = useState<OnigiriNode | null>(null);
   const [isNewSuperpositionOpen, setIsNewSuperpositionOpen] = useState(false);
   const [targetInsertion, setTargetInsertion] = useState<TargetInsertion | null>(null);
   const [isEntanglementOpen, setIsEntanglementOpen] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
 
-  // 1. Firebase Auth 認証リスナー
+  // 1. 初回ロード：localStorage から人生一覧を読み出し
   useEffect(() => {
-    const unsubscribe = subscribeAuthState((user, profile) => {
-      setCurrentUser(user);
-      setUserProfile(profile);
-      setIsAuthLoading(false);
+    const loadedLives = loadLives();
+    setLives(loadedLives);
 
-      if (user) {
-        loadUserLivesList(user.uid);
-      } else {
-        setUserLives([]);
-        setActiveLifeId(null);
+    // 直近に作業していた人生があれば復元可能（初期画面はタイトル）
+    const lastActiveId = getActiveLifeId();
+    if (lastActiveId) {
+      const activeLife = loadedLives.find((l) => l.id === lastActiveId);
+      if (activeLife) {
+        // オプション: 以前の人生情報のみ保持し、ユーザーがタイトル画面から選べるようにする
+        setCurrentLifeTitle(activeLife.title);
       }
-    });
-
-    return () => unsubscribe();
+    }
   }, []);
 
-  // ユーザーの人生一覧を取得
-  const loadUserLivesList = async (uid: string) => {
-    setIsLoadingLives(true);
-    try {
-      const lives = await getUserLives(uid);
-      setUserLives(lives);
-    } catch (e) {
-      console.error('Error fetching user lives:', e);
-    } finally {
-      setIsLoadingLives(false);
-    }
-  };
-
-  // 2. 世界線データの自動同期保存（Firestore）
-  const isFirstLoadRef = useRef(true);
+  // 2. 世界線データのローカル自動保存（localStorage）
+  const isInitialMount = useRef(true);
   useEffect(() => {
-    if (isFirstLoadRef.current) {
-      isFirstLoadRef.current = false;
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
       return;
     }
 
-    if (currentUser && activeLifeId && worldLine.nodes.length > 0) {
-      const timer = setTimeout(() => {
-        saveLifeWorldLine(currentUser.uid, activeLifeId, worldLine).catch((err) => {
-          console.error('Auto save worldline error:', err);
-        });
-      }, 800);
-
-      return () => clearTimeout(timer);
+    if (currentLifeId && currentView === 'space' && worldLine.nodes.length > 0) {
+      const existingLife = getLifeById(currentLifeId);
+      if (existingLife) {
+        const updatedLife: Life = {
+          ...existingLife,
+          title: currentLifeTitle || existingLife.title,
+          totalQuanta: worldLine.totalQuanta,
+          worldLine,
+        };
+        saveLife(updatedLife);
+        setLives(loadLives());
+      }
     }
-  }, [worldLine, currentUser, activeLifeId]);
+  }, [worldLine, currentLifeId, currentLifeTitle, currentView]);
 
   // 新規人生の創成（START MY LIFE）
   const handleCreateNewLife = async (
@@ -136,93 +113,71 @@ export default function App() {
     initialTheme: string,
     branches: { label: string; description: string }[]
   ) => {
-    if (!currentUser) {
-      await signInWithGoogle();
-      return;
-    }
-
-    const { life, worldLine: createdWorldLine } = await createNewLife(
-      currentUser.uid,
-      currentUser.displayName || '量子観測者',
-      title,
-      initialTheme,
-      branches
-    );
-
-    setUserLives((prev) => [life, ...prev]);
-    setActiveLifeId(life.id);
-    setActiveLifeTitle(life.title);
-    setWorldLine(createdWorldLine);
-    setSelectedNodeId(createdWorldLine.nodes[0]?.id || null);
+    const newLife = createNewLifeRecord(title, initialTheme, branches);
+    setLives(loadLives());
+    setCurrentLifeId(newLife.id);
+    setCurrentLifeTitle(newLife.title);
+    setWorldLine(newLife.worldLine);
+    setSelectedNodeId(newLife.worldLine.nodes[0]?.id || null);
     setSelectedBranchId(null);
+    setActiveLifeId(newLife.id);
+    setCurrentView('space');
+    setIsNewLifeModalOpen(false);
   };
 
   // 過去の人生を再開（Resume）
-  const handleResumeLife = async (lifeId: string) => {
-    if (!currentUser) return;
-
-    try {
-      const res = await loadLifeWorldLine(currentUser.uid, lifeId);
-      if (res) {
-        setActiveLifeId(res.life.id);
-        setActiveLifeTitle(res.life.title);
-        setWorldLine(res.worldLine);
-        setSelectedNodeId(res.worldLine.nodes[0]?.id || null);
-        setSelectedBranchId(null);
-      }
-    } catch (err) {
-      console.error('Failed to resume life:', err);
+  const handleResumeLife = (lifeId: string) => {
+    const life = getLifeById(lifeId);
+    if (life) {
+      setCurrentLifeId(life.id);
+      setCurrentLifeTitle(life.title);
+      setWorldLine(life.worldLine);
+      setSelectedNodeId(life.worldLine.nodes[0]?.id || null);
+      setSelectedBranchId(null);
+      setActiveLifeId(life.id);
+      setCurrentView('space');
     }
   };
 
   // 人生（Life）の個別削除
-  const handleDeleteLife = async (lifeId: string, title: string) => {
-    if (!currentUser) return;
+  const handleDeleteLife = (lifeId: string, title: string) => {
     if (!window.confirm(`世界線「${title}」を削除してもよろしいですか？この操作は取り消せません。`)) {
       return;
     }
 
-    try {
-      await deleteUserLife(currentUser.uid, lifeId);
-      setUserLives((prev) => prev.filter((l) => l.id !== lifeId));
-      if (activeLifeId === lifeId) {
-        setActiveLifeId(null);
-      }
-    } catch (err) {
-      console.error('Failed to delete life:', err);
+    deleteLife(lifeId);
+    setLives(loadLives());
+
+    if (currentLifeId === lifeId) {
+      setCurrentLifeId(null);
+      setCurrentView('title');
     }
   };
 
-  // アカウント連携解除・全データ削除（退会）
-  const handleConfirmDeleteAccount = async () => {
-    try {
-      await deleteAccountAndData();
-      setCurrentUser(null);
-      setUserProfile(null);
-      setUserLives([]);
-      setActiveLifeId(null);
-      setWorldLine({
-        userId: '',
-        userName: '',
-        totalQuanta: 0,
-        nodes: [],
-        logs: [],
-        entanglements: [],
-      });
-    } catch (err) {
-      console.error('Error during account deletion:', err);
-      throw err;
-    }
+  // 端末内全データ完全リセット
+  const handleClearAllData = () => {
+    clearAllData();
+    setLives([]);
+    setCurrentLifeId(null);
+    setCurrentView('title');
+    setWorldLine({
+      userId: 'local-observer',
+      userName: 'ローカル観測者',
+      totalQuanta: 0,
+      nodes: [],
+      logs: [],
+      entanglements: [],
+    });
   };
 
   // タイトル画面へ戻る
   const handleReturnToTitle = () => {
+    setCurrentView('title');
+    setCurrentLifeId(null);
     setActiveLifeId(null);
     setSelectedNodeId(null);
     setSelectedBranchId(null);
-    if (currentUser) {
-      loadUserLivesList(currentUser.uid);
-    }
+    setLives(loadLives());
   };
 
   // 観測（決断）の確定処理
@@ -282,12 +237,6 @@ export default function App() {
       updatedNodes[nodeIndex] = updatedNode;
 
       const nextQuanta = prev.totalQuanta + 1;
-
-      // ユーザーの総観測数をFirestoreにも更新
-      if (currentUser) {
-        incrementUserQuantums(currentUser.uid, 1);
-        setUserProfile((p) => (p ? { ...p, totalQuantums: (p.totalQuantums || 0) + 1 } : null));
-      }
 
       return {
         ...prev,
@@ -406,7 +355,7 @@ export default function App() {
       // 末尾への新規量子ノード追加
       const parentNode = selectedNode || prev.nodes[prev.nodes.length - 1] || null;
       let newX = 280;
-      let newY = 350;
+      let newY = 340;
       if (parentNode) {
         newX = parentNode.position.x + 440;
         const numParentBranches = parentNode.branches.length;
@@ -542,39 +491,16 @@ export default function App() {
   const selectedBranch = selectedNode?.branches.find((b) => b.id === selectedBranchId) || null;
   const currentQuantumLog = worldLine.logs.find((l) => l.nodeId === selectedNodeId) || null;
 
-  // ローディング画面
-  if (isAuthLoading) {
-    return (
-      <div className="w-screen h-screen flex flex-col items-center justify-center bg-[#020307] text-cyan-400">
-        <div className="w-8 h-8 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin mb-4" />
-        <span className="text-xs font-mono tracking-widest uppercase">Initializing Quantum Universe...</span>
-      </div>
-    );
-  }
-
-  // 人生が未選択の場合：タイトル画面（START MY LIFE / 人生一覧）を表示
-  if (!activeLifeId) {
+  // 画面表示判定：タイトル画面または量子空間
+  if (currentView === 'title' || !currentLifeId) {
     return (
       <>
         <TitleScreen
-          user={currentUser}
-          profile={userProfile}
-          lives={userLives}
-          isLoadingLives={isLoadingLives}
-          onSignInGoogle={async () => {
-            await signInWithGoogle();
-          }}
-          onSignOut={signOutUser}
-          onOpenNewLife={() => {
-            if (!currentUser) {
-              signInWithGoogle().then(() => setIsNewLifeModalOpen(true));
-            } else {
-              setIsNewLifeModalOpen(true);
-            }
-          }}
+          lives={lives}
+          onOpenNewLife={() => setIsNewLifeModalOpen(true)}
           onResumeLife={handleResumeLife}
           onDeleteLife={handleDeleteLife}
-          onOpenDeleteAccount={() => setIsDeleteAccountModalOpen(true)}
+          onClearAllData={handleClearAllData}
         />
 
         <NewLifeModal
@@ -582,24 +508,17 @@ export default function App() {
           onClose={() => setIsNewLifeModalOpen(false)}
           onCreate={handleCreateNewLife}
         />
-
-        <DeleteAccountModal
-          isOpen={isDeleteAccountModalOpen}
-          onClose={() => setIsDeleteAccountModalOpen(false)}
-          onConfirmDelete={handleConfirmDeleteAccount}
-        />
       </>
     );
   }
 
-  // 人生が選択されている場合：量子世界線キャンバスを表示
+  // 量子世界線キャンバス表示（space）
   return (
     <div className="w-screen h-screen flex flex-col bg-[#020307] text-slate-100 font-sans overflow-hidden">
       {/* 1. Oni-Q ヘッダー */}
       <Header
-        lifeTitle={activeLifeTitle}
+        lifeTitle={currentLifeTitle}
         totalQuanta={worldLine.totalQuanta}
-        user={currentUser}
         onReturnToTitle={handleReturnToTitle}
         onOpenNewSuperposition={() => {
           if (selectedBranch && selectedBranch.status === 'actualized' && selectedNode) {
@@ -619,11 +538,6 @@ export default function App() {
         }}
         onOpenEntanglementDemo={() => setIsEntanglementOpen(true)}
         onOpenGuide={() => setIsGuideOpen(true)}
-        onOpenDeleteAccount={() => setIsDeleteAccountModalOpen(true)}
-        onSignOut={async () => {
-          await signOutUser();
-          handleReturnToTitle();
-        }}
       />
 
       {/* 2. メイン量子空間キャンバス */}
@@ -691,12 +605,6 @@ export default function App() {
       )}
 
       {isGuideOpen && <GuideModal onClose={() => setIsGuideOpen(false)} />}
-
-      <DeleteAccountModal
-        isOpen={isDeleteAccountModalOpen}
-        onClose={() => setIsDeleteAccountModalOpen(false)}
-        onConfirmDelete={handleConfirmDeleteAccount}
-      />
     </div>
   );
 }

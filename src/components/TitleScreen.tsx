@@ -1,69 +1,58 @@
 /**
  * @file src/components/TitleScreen.tsx
- * @description Oni-Q ポータル・タイトル画面
- * - START MY LIFE ボタンによる新規人生創成フロー
- * - Google アカウント認証連携
- * - 過去の人生一覧からの世界線再開（Resume）
- * - アカウント連携解除・全データ削除（退会）モーダル
+ * @description Oni-Q ポータル・タイトル画面（ローカル完結型アーキテクチャ）
+ * - Firebase/Google認証UIを完全排除し、端末内localStorageで安全に稼働
+ * - 「START MY LIFE」ボタンによる新規人生創成モーダルフロー（人生名 -> 最初の決断テーマ -> 初期ノード創成 -> 量子空間遷移）
+ * - 過去の人生一覧表示＆ワンクリック再開（Resume）
+ * - 端末内の「全データを初期化（リセット）」機能と確認モーダル
  */
 
 import React, { useState } from 'react';
-import { User } from 'firebase/auth';
-import { UserProfile } from '../services/authService';
-import { LifeRecord } from '../types/quantum';
+import { Life } from '../services/storageService';
 import {
   Sparkles,
   Play,
   Clock,
   Trash2,
-  LogOut,
-  ShieldAlert,
+  AlertTriangle,
+  RotateCcw,
   ChevronRight,
-  GitBranch,
   Layers,
   ArrowRight,
-  UserCheck,
+  HardDrive,
+  CheckCircle2,
+  X,
 } from 'lucide-react';
 
 interface TitleScreenProps {
-  user: User | null;
-  profile: UserProfile | null;
-  lives: LifeRecord[];
-  isLoadingLives: boolean;
-  onSignInGoogle: () => Promise<void>;
-  onSignOut: () => Promise<void>;
+  lives: Life[];
   onOpenNewLife: () => void;
   onResumeLife: (lifeId: string) => void;
   onDeleteLife: (lifeId: string, title: string) => void;
-  onOpenDeleteAccount: () => void;
+  onClearAllData: () => void;
 }
 
 export const TitleScreen: React.FC<TitleScreenProps> = ({
-  user,
-  profile,
   lives,
-  isLoadingLives,
-  onSignInGoogle,
-  onSignOut,
   onOpenNewLife,
   onResumeLife,
   onDeleteLife,
-  onOpenDeleteAccount,
+  onClearAllData,
 }) => {
-  const [isSigningIn, setIsSigningIn] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+  // 全データ消去（リセット）確認モーダルの開閉状態
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [resetInput, setResetInput] = useState('');
+  const [resetError, setResetError] = useState<string | null>(null);
 
-  const handleSignIn = async () => {
-    try {
-      setIsSigningIn(true);
-      setAuthError(null);
-      await onSignInGoogle();
-    } catch (err: any) {
-      console.error(err);
-      setAuthError('Googleログインに失敗しました。もう一度お試しください。');
-    } finally {
-      setIsSigningIn(false);
+  const handleConfirmReset = () => {
+    if (resetInput.trim() !== 'リセット') {
+      setResetError('確認のため「リセット」と正確に入力してください。');
+      return;
     }
+    setResetError(null);
+    onClearAllData();
+    setIsResetModalOpen(false);
+    setResetInput('');
   };
 
   return (
@@ -84,11 +73,11 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
         />
       </div>
 
-      {/* トップバー：認証ステータス */}
+      {/* トップバー：ロゴ ＆ ローカル保存ステータス */}
       <header className="relative z-10 w-full max-w-6xl mx-auto px-6 py-6 flex items-center justify-between">
         {/* ロゴ */}
         <div className="flex items-center gap-3">
-          {/* 偏光量子オーブ */}
+          {/* 偏光量子オーブ（2/3スケール楕円＋中央単一パルス円） */}
           <div className="relative w-9 h-9 flex items-center justify-center shrink-0">
             <div className="absolute w-6 h-[9px] rounded-full border border-cyan-400/80 -rotate-30 shadow-[0_0_8px_rgba(56,189,248,0.6)] animate-[spin_10s_linear_infinite]" />
             <div className="absolute w-[21px] h-[7px] rounded-full border border-purple-400/60 rotate-45 shadow-[0_0_6px_rgba(192,132,252,0.4)] animate-[spin_8s_linear_infinite_reverse]" />
@@ -104,72 +93,19 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           </div>
         </div>
 
-        {/* ユーザー情報 or ログインボタン */}
-        <div>
-          {user ? (
-            <div className="flex items-center gap-3 bg-slate-900/80 border border-slate-800 px-3.5 py-1.5 rounded-full shadow-lg backdrop-blur-md">
-              {user.photoURL ? (
-                <img
-                  src={user.photoURL}
-                  alt={user.displayName || 'User'}
-                  className="w-7 h-7 rounded-full border border-cyan-400/60 object-cover"
-                />
-              ) : (
-                <div className="w-7 h-7 rounded-full bg-cyan-950 border border-cyan-500/50 flex items-center justify-center text-cyan-400 text-xs font-bold">
-                  {user.displayName?.[0] || 'U'}
-                </div>
-              )}
-              <div className="hidden sm:block text-left text-xs">
-                <p className="font-medium text-slate-200 leading-tight">
-                  {user.displayName || '量子観測者'}
-                </p>
-                <p className="text-[10px] text-slate-400 truncate max-w-[150px]">
-                  {user.email}
-                </p>
-              </div>
-              <button
-                onClick={onSignOut}
-                className="p-1.5 text-slate-400 hover:text-slate-200 rounded-full hover:bg-slate-800 transition"
-                title="ログアウト"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={handleSignIn}
-              disabled={isSigningIn}
-              className="flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold bg-white text-slate-900 hover:bg-slate-100 shadow-[0_0_20px_rgba(255,255,255,0.2)] transition disabled:opacity-50"
-            >
-              {/* Google G アイコン */}
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
-                <path
-                  fill="#4285F4"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                />
-              </svg>
-              <span>{isSigningIn ? '接続中...' : 'Googleでログイン'}</span>
-            </button>
-          )}
+        {/* スタンドアロン・ローカルステータス表示 */}
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/80 border border-slate-800 text-xs text-slate-300 backdrop-blur-md shadow-inner">
+          <HardDrive className="w-3.5 h-3.5 text-cyan-400" />
+          <span className="hidden sm:inline text-slate-400">保存先:</span>
+          <span className="font-mono text-cyan-300 text-[11px]">端末内ローカル保存</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
         </div>
       </header>
 
       {/* メインヒーローセクション */}
-      <main className="relative z-10 w-full max-w-4xl mx-auto px-6 py-8 flex flex-col items-center text-center">
+      <main className="relative z-10 w-full max-w-4xl mx-auto px-6 py-6 flex flex-col items-center text-center">
         {/* サブタイトルバッジ */}
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/70 border border-cyan-800/80 text-cyan-300 text-xs mb-6 shadow-[0_0_15px_rgba(6,182,212,0.2)]">
+        <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-cyan-950/70 border border-cyan-800/80 text-cyan-300 text-xs mb-6 shadow-[0_0_15px_rgba(6,182,212,0.2)]">
           <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
           <span>人生の決断と行動、それは量子観測</span>
         </div>
@@ -184,142 +120,201 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
         <p className="max-w-xl text-slate-400 text-sm md:text-base leading-relaxed mb-8">
           すべての岐路は、おにぎりの具材のように固有のエネルギーを宿しています。<br className="hidden sm:inline" />
-          量子状態の重ね合わせから主世界線への収束を、美しく可視化・観測しましょう。
+          外部通信を行わず、あなた自身の端末内で安全かつ自由に人生の分岐を可視化・観測します。
         </p>
 
-        {authError && (
-          <div className="mb-6 p-3 rounded-xl bg-red-950/80 border border-red-800 text-red-200 text-xs max-w-md">
-            {authError}
-          </div>
-        )}
-
         {/* コールトゥアクション（START MY LIFE） */}
-        <div className="flex flex-col sm:flex-row items-center gap-4 mb-14">
-          {user ? (
+        <div className="flex flex-col sm:flex-row items-center gap-4 mb-12">
+          <button
+            onClick={onOpenNewLife}
+            className="group relative flex items-center gap-3 px-8 py-4 rounded-2xl text-base font-bold bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 shadow-[0_0_35px_rgba(6,182,212,0.5)] transition duration-300 hover:scale-[1.02] active:scale-[0.98]"
+          >
+            <Play className="w-5 h-5 fill-slate-950 stroke-[2.5]" />
+            <span className="tracking-wide">START MY LIFE</span>
+            <ChevronRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
+          </button>
+        </div>
+
+        {/* 過去の人生一覧（localStorageから読み出し） */}
+        <div className="w-full max-w-3xl text-left bg-slate-950/70 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-md shadow-2xl">
+          <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-cyan-400" />
+              <h3 className="font-bold text-sm text-slate-200">過去の人生の世界線</h3>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-cyan-400 font-mono">
+                {lives.length}
+              </span>
+            </div>
             <button
               onClick={onOpenNewLife}
-              className="group relative flex items-center gap-3 px-8 py-4 rounded-2xl text-base font-bold bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 shadow-[0_0_35px_rgba(6,182,212,0.5)] transition duration-300 hover:scale-[1.02] active:scale-[0.98]"
+              className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 transition flex items-center gap-1"
             >
-              <Play className="w-5 h-5 fill-slate-950 stroke-[2.5]" />
-              <span className="tracking-wide">START MY LIFE</span>
-              <ChevronRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
+              <span>＋ 新しい世界線を創成</span>
             </button>
-          ) : (
-            <button
-              onClick={handleSignIn}
-              disabled={isSigningIn}
-              className="group relative flex items-center gap-3 px-8 py-4 rounded-2xl text-base font-bold bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 shadow-[0_0_35px_rgba(6,182,212,0.5)] transition duration-300 hover:scale-[1.02] active:scale-[0.98]"
-            >
-              <Play className="w-5 h-5 fill-slate-950 stroke-[2.5]" />
-              <span className="tracking-wide">Googleでログインして START</span>
-              <ChevronRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
-            </button>
-          )}
-        </div>
+          </div>
 
-        {/* 過去の人生一覧（ログイン時のみ表示） */}
-        {user && (
-          <div className="w-full max-w-3xl text-left bg-slate-950/70 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-md shadow-2xl">
-            <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Layers className="w-4 h-4 text-cyan-400" />
-                <h3 className="font-bold text-sm text-slate-200">過去の人生の世界線</h3>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-cyan-400 font-mono">
-                  {lives.length}
-                </span>
-              </div>
-              <button
-                onClick={onOpenNewLife}
-                className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 transition flex items-center gap-1"
-              >
-                <span>＋ 新規作成</span>
-              </button>
+          {lives.length === 0 ? (
+            <div className="py-10 text-center text-slate-500 text-xs">
+              <p className="mb-2">まだ記録された人生の世界線がありません。</p>
+              <p className="text-slate-400">
+                上の「START MY LIFE」をクリックして、最初の決断を観測しましょう。
+              </p>
             </div>
-
-            {isLoadingLives ? (
-              <div className="py-12 text-center text-slate-500 text-xs flex items-center justify-center gap-2">
-                <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-                <span>世界線データを読み込み中...</span>
-              </div>
-            ) : lives.length === 0 ? (
-              <div className="py-10 text-center text-slate-500 text-xs">
-                <p className="mb-2">まだ記録された人生の世界線がありません。</p>
-                <p className="text-slate-400">
-                  「START MY LIFE」をクリックして、あなたの最初の決断を観測しましょう。
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {lives.map((life) => (
+          ) : (
+            <div className="space-y-3">
+              {lives.map((life) => (
+                <div
+                  key={life.id}
+                  className="group relative flex items-center justify-between p-4 rounded-xl bg-slate-900/70 hover:bg-slate-900 border border-slate-800/90 hover:border-cyan-500/50 transition duration-200"
+                >
                   <div
-                    key={life.id}
-                    className="group relative flex items-center justify-between p-4 rounded-xl bg-slate-900/70 hover:bg-slate-900 border border-slate-800/90 hover:border-cyan-500/50 transition duration-200"
+                    onClick={() => onResumeLife(life.id)}
+                    className="flex-1 cursor-pointer pr-4"
                   >
-                    <div
-                      onClick={() => onResumeLife(life.id)}
-                      className="flex-1 cursor-pointer pr-4"
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-bold text-sm text-white group-hover:text-cyan-300 transition">
-                          {life.title}
-                        </span>
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-950/80 text-cyan-400 border border-cyan-800 font-mono">
-                          {life.totalQuanta} quantum
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400 truncate mb-1.5">
-                        原点: {life.initialTheme}
-                      </p>
-                      <div className="flex items-center gap-3 text-[11px] text-slate-500 font-mono">
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          更新: {new Date(life.updatedAt).toLocaleDateString('ja-JP')}
-                        </span>
-                      </div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-bold text-sm text-white group-hover:text-cyan-300 transition">
+                        {life.title}
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-950/80 text-cyan-400 border border-cyan-800 font-mono">
+                        {life.totalQuanta} quantum
+                      </span>
                     </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => onResumeLife(life.id)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-950 hover:bg-cyan-900 border border-cyan-800/80 text-cyan-300 transition"
-                      >
-                        <span>世界線を再開</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => onDeleteLife(life.id, life.title)}
-                        className="p-2 text-slate-500 hover:text-red-400 rounded-lg hover:bg-red-950/40 transition"
-                        title="この世界線を削除"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                    <p className="text-xs text-slate-400 truncate mb-1.5">
+                      原点テーマ: {life.initialTheme}
+                    </p>
+                    <div className="flex items-center gap-3 text-[11px] text-slate-500 font-mono">
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        更新: {new Date(life.updatedAt).toLocaleDateString('ja-JP')}
+                      </span>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => onResumeLife(life.id)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-950 hover:bg-cyan-900 border border-cyan-800/80 text-cyan-300 transition"
+                    >
+                      <span>世界線を再開</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => onDeleteLife(life.id, life.title)}
+                      className="p-2 text-slate-500 hover:text-red-400 rounded-lg hover:bg-red-950/40 transition"
+                      title="この世界線を削除"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </main>
 
-      {/* フッター：退会・データ削除アクション & コピーライト */}
+      {/* フッター：全データ初期化（リセット） ＆ コピーライト */}
       <footer className="relative z-10 w-full max-w-4xl mx-auto px-6 py-6 border-t border-slate-900 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-4">
-        <div>
-          <span>© 2026 Onigiri Quantum (Oni-Q) • Powered by Firebase</span>
+        <div className="flex items-center gap-2">
+          <span>© 2026 Onigiri Quantum (Oni-Q) • Local Storage Standalone Architecture</span>
         </div>
 
-        {user && (
-          <div className="flex items-center gap-4">
-            <button
-              onClick={onOpenDeleteAccount}
-              className="flex items-center gap-1.5 text-slate-500 hover:text-red-400 transition"
-            >
-              <ShieldAlert className="w-3.5 h-3.5" />
-              <span>アカウント連携解除・データ全削除（退会）</span>
-            </button>
-          </div>
-        )}
+        <button
+          onClick={() => {
+            setResetError(null);
+            setResetInput('');
+            setIsResetModalOpen(true);
+          }}
+          className="flex items-center gap-1.5 text-slate-500 hover:text-red-400 transition"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+          <span>全データを初期化（リセット）</span>
+        </button>
       </footer>
+
+      {/* 全データ初期化（リセット）確認モーダル */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div className="relative w-full max-w-md bg-slate-900 border border-red-500/40 rounded-2xl p-6 md:p-8 shadow-[0_0_50px_rgba(239,68,68,0.25)] text-slate-100 animate-in fade-in zoom-in-95 duration-200">
+            <button
+              onClick={() => setIsResetModalOpen(false)}
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* 警告ヘッダー */}
+            <div className="flex items-center gap-3 mb-4 text-red-400">
+              <div className="w-12 h-12 rounded-xl bg-red-950/80 border border-red-500/50 flex items-center justify-center shrink-0 shadow-[0_0_20px_rgba(239,68,68,0.3)]">
+                <AlertTriangle className="w-6 h-6 animate-pulse" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-red-200">
+                  端末内全データの完全消去
+                </h2>
+                <span className="text-[10px] text-red-400 uppercase tracking-widest font-mono">
+                  LOCAL DATA RESET
+                </span>
+              </div>
+            </div>
+
+            {/* 説明文 */}
+            <div className="space-y-3 mb-6 text-xs text-slate-300 leading-relaxed bg-red-950/30 border border-red-900/60 p-4 rounded-xl">
+              <p className="font-semibold text-red-300 flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />
+                この操作は取り消すことができません。
+              </p>
+              <ul className="list-disc list-inside space-y-1 text-slate-400 text-[11px]">
+                <li>ブラウザの localStorage に保存されたすべての人生の世界線が削除されます。</li>
+                <li>記録されたすべての量子ノード・決断ログが初期状態にリセットされます。</li>
+              </ul>
+            </div>
+
+            {resetError && (
+              <div className="mb-4 p-3 rounded-lg bg-red-950/80 border border-red-800 text-red-200 text-xs">
+                {resetError}
+              </div>
+            )}
+
+            {/* 確認入力 */}
+            <div className="mb-6">
+              <label className="block text-xs font-medium text-slate-400 mb-2">
+                確認のため、下に <span className="font-bold text-red-300">リセット</span> と入力してください：
+              </label>
+              <input
+                type="text"
+                value={resetInput}
+                onChange={(e) => {
+                  setResetInput(e.target.value);
+                  setResetError(null);
+                }}
+                placeholder="リセット"
+                className="w-full px-3.5 py-2.5 bg-slate-950 border border-red-900/60 focus:border-red-500 rounded-xl text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-red-500 transition"
+              />
+            </div>
+
+            {/* ボタン群 */}
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsResetModalOpen(false)}
+                className="px-4 py-2 text-xs font-medium text-slate-400 hover:text-white transition"
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReset}
+                disabled={resetInput.trim() !== 'リセット'}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white shadow-[0_0_20px_rgba(239,68,68,0.4)] disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>全データを初期化する</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
