@@ -1,0 +1,7 @@
+{
+  "name": "Onigiri Quantum",
+  "description": "人生の決断を量子状態の観測・確定（1quantum）として可視化し、世界線とIFの分岐を探索する量子ライフライン・トラッカー「Oni-Q」",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
