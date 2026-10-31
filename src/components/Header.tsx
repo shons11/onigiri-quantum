@@ -55,8 +55,10 @@ export const Header: React.FC<HeaderProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <h1 className="font-bold tracking-tight text-white text-sm sm:text-base flex items-center gap-1.5">
-              <span>{lifeTitle || 'Onigiri Quantum'}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800/80 font-mono">
+              <span className="truncate max-w-[85px] sm:max-w-[180px] md:max-w-none" title={lifeTitle || 'Onigiri Quantum'}>
+                {lifeTitle || 'Onigiri Quantum'}
+              </span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800/80 font-mono shrink-0">
                 Oni-Q
               </span>
             </h1>

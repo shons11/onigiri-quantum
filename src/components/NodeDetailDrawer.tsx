@@ -78,10 +78,58 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
     setIsAddingBranch(false);
   };
 
+  // スマホ向けスワイプクローズ処理
+  const touchStartPos = React.useRef<{ x: number; y: number } | null>(null);
+  const [swipeOffset, setSwipeOffset] = useState<number>(0);
+
+  const handleHeaderTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    touchStartPos.current = { x: t.clientX, y: t.clientY };
+  };
+
+  const handleHeaderTouchMove = (e: React.TouchEvent) => {
+    if (!touchStartPos.current) return;
+    const t = e.touches[0];
+    const dx = t.clientX - touchStartPos.current.x;
+    // 右スワイプで閉じる
+    if (dx > 0) {
+      setSwipeOffset(dx);
+    }
+  };
+
+  const handleHeaderTouchEnd = () => {
+    if (swipeOffset > 80) {
+      onClose();
+    }
+    touchStartPos.current = null;
+    setSwipeOffset(0);
+  };
+
   return (
-    <div className="absolute top-16 right-0 bottom-0 w-full sm:w-[420px] bg-slate-950/95 border-l border-slate-800 backdrop-blur-xl shadow-2xl z-30 flex flex-col overflow-hidden text-slate-200 animate-in slide-in-from-right duration-300">
+    <div
+      style={{
+        transform: swipeOffset > 0 ? `translateX(${swipeOffset}px)` : undefined,
+        transition: swipeOffset > 0 ? 'none' : 'transform 0.25s ease',
+      }}
+      className="absolute top-16 right-0 bottom-0 w-full sm:w-[420px] bg-slate-950/95 border-l border-slate-800 backdrop-blur-xl shadow-2xl z-30 flex flex-col overflow-hidden text-slate-200 animate-in slide-in-from-right duration-300"
+    >
+      {/* スマホ用スワイプハンドル（右スワイプで閉じる） */}
+      <div
+        onTouchStart={handleHeaderTouchStart}
+        onTouchMove={handleHeaderTouchMove}
+        onTouchEnd={handleHeaderTouchEnd}
+        className="sm:hidden flex items-center justify-center py-2 bg-slate-900/90 border-b border-slate-800/60 cursor-grab active:cursor-grabbing touch-none select-none"
+      >
+        <div className="w-12 h-1 rounded-full bg-slate-600/80 mb-0.5" />
+      </div>
+
       {/* ドロワーヘッダー */}
-      <div className="p-4 border-b border-slate-800/80 flex items-center justify-between bg-slate-900/60">
+      <div
+        onTouchStart={handleHeaderTouchStart}
+        onTouchMove={handleHeaderTouchMove}
+        onTouchEnd={handleHeaderTouchEnd}
+        className="p-4 border-b border-slate-800/80 flex items-center justify-between bg-slate-900/60"
+      >
         <div className="flex items-center gap-2">
           {isCounterfactualBranch ? (
             <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-rose-400 bg-rose-950/70 px-2 py-0.5 rounded border border-rose-800">

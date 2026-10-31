@@ -315,27 +315,32 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
     nodes.forEach((n) => nodeMap.current.set(n.id, n));
   }, [nodes]);
 
-  // クリック検出
-  const handleCanvasClick = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (!canvasRef.current) return;
-      const rect = canvasRef.current.getBoundingClientRect();
-      const clickScreenX = e.clientX - rect.left;
-      const clickScreenY = e.clientY - rect.top;
+  // 最新のカメラ状態を即時参照するRef
+  const cameraRef = useRef(camera);
+  useEffect(() => {
+    cameraRef.current = camera;
+  }, [camera]);
 
-      const worldX = (clickScreenX - camera.x) / camera.zoom;
-      const worldY = (clickScreenY - camera.y) / camera.zoom;
+  // ノード・ブランチカードのヒットテスト共通処理（タッチ時は判定領域を拡大）
+  const performHitTest = useCallback(
+    (screenX: number, screenY: number, isTouch = false) => {
+      const currentCam = cameraRef.current;
+      const worldX = (screenX - currentCam.x) / currentCam.zoom;
+      const worldY = (screenY - currentCam.y) / currentCam.zoom;
 
+      // 1. ノード判定 (タッチ時は半径を広げてタップしやすくする)
+      const nodeTolerance = isTouch ? 50 : 38;
       for (const node of nodes) {
         const dx = worldX - node.position.x;
         const dy = worldY - node.position.y;
-        if (Math.hypot(dx, dy) <= 40) {
+        if (Math.hypot(dx, dy) <= nodeTolerance) {
           onSelectNode(node);
-          return;
+          return true;
         }
       }
 
-      // ブランチ（選択肢）のクリック検出（ひとつの枠をクリックで全文展開/選択）
+      // 2. ブランチ（選択肢枠）判定 (タッチ時はマージンを広げる)
+      const cardMargin = isTouch ? 10 : 6;
       for (const node of nodes) {
         const numBranches = node.branches.length;
         for (let k = 0; k < numBranches; k++) {
@@ -347,34 +352,43 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
           const cardY = branchPos.y - cardH / 2;
 
           if (
-            worldX >= cardX - 6 &&
-            worldX <= cardX + cardW + 6 &&
-            worldY >= cardY - 6 &&
-            worldY <= cardY + cardH + 6
+            worldX >= cardX - cardMargin &&
+            worldX <= cardX + cardW + cardMargin &&
+            worldY >= cardY - cardMargin &&
+            worldY <= cardY + cardH + cardMargin
           ) {
             onSelectBranch(node, branch);
-            return;
+            return true;
           }
         }
       }
+      return false;
     },
-    [camera, nodes, onSelectNode, onSelectBranch]
+    [nodes, onSelectNode, onSelectBranch, selectedBranchId]
   );
+
+  // マウスドラッグ判定
+  const hasMouseMovedRef = useRef(false);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (e.button === 0) {
+      stopMomentum();
       isDraggingRef.current = true;
+      hasMouseMovedRef.current = false;
       dragStartRef.current = { x: e.clientX - camera.x, y: e.clientY - camera.y };
     }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isDraggingRef.current) {
-      setCamera((prev) => ({
-        ...prev,
-        x: e.clientX - dragStartRef.current.x,
-        y: e.clientY - dragStartRef.current.y,
-      }));
+      hasMouseMovedRef.current = true;
+      const nextX = e.clientX - dragStartRef.current.x;
+      const nextY = e.clientY - dragStartRef.current.y;
+      setCamera((prev) => {
+        const next = { ...prev, x: nextX, y: nextY };
+        cameraRef.current = next;
+        return next;
+      });
     }
   };
 
@@ -382,9 +396,25 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
     isDraggingRef.current = false;
   };
 
+  const handleCanvasClick = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (hasMouseMovedRef.current) {
+        hasMouseMovedRef.current = false;
+        return;
+      }
+      if (!canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const clickScreenX = e.clientX - rect.left;
+      const clickScreenY = e.clientY - rect.top;
+      performHitTest(clickScreenX, clickScreenY, false);
+    },
+    [performHitTest]
+  );
+
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     if (!canvasRef.current) return;
+    stopMomentum();
     const rect = canvasRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
@@ -395,7 +425,291 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
     const newX = mouseX - (mouseX - camera.x) * (newZoom / camera.zoom);
     const newY = mouseY - (mouseY - camera.y) * (newZoom / camera.zoom);
 
-    setCamera({ x: newX, y: newY, zoom: newZoom });
+    const nextCamera = { x: newX, y: newY, zoom: newZoom };
+    cameraRef.current = nextCamera;
+    setCamera(nextCamera);
+  };
+
+  // -------------------------------------------------------------------------
+  // スマートフォン・タブレット向けタッチ＆スワイプ＆ピンチズーム処理
+  // -------------------------------------------------------------------------
+  const touchStateRef = useRef<{
+    mode: 'none' | 'pan' | 'pinch';
+    startTime: number;
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastY: number;
+    hasMoved: boolean;
+    // 慣性スワイプ速度
+    vx: number;
+    vy: number;
+    lastTime: number;
+    // ピンチズーム
+    pinchStartDist: number;
+    pinchStartZoom: number;
+    pinchStartCenter: { x: number; y: number };
+    pinchStartCamera: { x: number; y: number };
+  }>({
+    mode: 'none',
+    startTime: 0,
+    startX: 0,
+    startY: 0,
+    lastX: 0,
+    lastY: 0,
+    hasMoved: false,
+    vx: 0,
+    vy: 0,
+    lastTime: 0,
+    pinchStartDist: 0,
+    pinchStartZoom: 1,
+    pinchStartCenter: { x: 0, y: 0 },
+    pinchStartCamera: { x: 0, y: 0 },
+  });
+
+  const momentumAnimRef = useRef<number | null>(null);
+
+  const stopMomentum = useCallback(() => {
+    if (momentumAnimRef.current !== null) {
+      cancelAnimationFrame(momentumAnimRef.current);
+      momentumAnimRef.current = null;
+    }
+  }, []);
+
+  // ネイティブタッチイベント（iOS/Androidのページスクロール抑止＆高レスポンススワイプ）
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const onTouchStart = (e: TouchEvent) => {
+      stopMomentum();
+
+      if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        const rect = canvas.getBoundingClientRect();
+        const clientX = touch.clientX - rect.left;
+        const clientY = touch.clientY - rect.top;
+
+        touchStateRef.current = {
+          mode: 'pan',
+          startTime: Date.now(),
+          startX: clientX,
+          startY: clientY,
+          lastX: clientX,
+          lastY: clientY,
+          hasMoved: false,
+          vx: 0,
+          vy: 0,
+          lastTime: performance.now(),
+          pinchStartDist: 0,
+          pinchStartZoom: cameraRef.current.zoom,
+          pinchStartCenter: { x: 0, y: 0 },
+          pinchStartCamera: { x: cameraRef.current.x, y: cameraRef.current.y },
+        };
+      } else if (e.touches.length === 2) {
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const rect = canvas.getBoundingClientRect();
+        const x1 = t1.clientX - rect.left;
+        const y1 = t1.clientY - rect.top;
+        const x2 = t2.clientX - rect.left;
+        const y2 = t2.clientY - rect.top;
+
+        const dist = Math.hypot(x2 - x1, y2 - y1);
+        const center = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
+
+        touchStateRef.current = {
+          mode: 'pinch',
+          startTime: Date.now(),
+          startX: center.x,
+          startY: center.y,
+          lastX: center.x,
+          lastY: center.y,
+          hasMoved: true,
+          vx: 0,
+          vy: 0,
+          lastTime: performance.now(),
+          pinchStartDist: Math.max(dist, 10),
+          pinchStartZoom: cameraRef.current.zoom,
+          pinchStartCenter: center,
+          pinchStartCamera: { x: cameraRef.current.x, y: cameraRef.current.y },
+        };
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.cancelable) {
+        e.preventDefault();
+      }
+
+      const state = touchStateRef.current;
+      const now = performance.now();
+      const dt = Math.max(now - state.lastTime, 1);
+
+      if (e.touches.length === 1 && state.mode === 'pan') {
+        const touch = e.touches[0];
+        const rect = canvas.getBoundingClientRect();
+        const clientX = touch.clientX - rect.left;
+        const clientY = touch.clientY - rect.top;
+
+        const dx = clientX - state.lastX;
+        const dy = clientY - state.lastY;
+
+        const totalDist = Math.hypot(clientX - state.startX, clientY - state.startY);
+        if (totalDist > 6) {
+          state.hasMoved = true;
+        }
+
+        const instantVx = dx / dt;
+        const instantVy = dy / dt;
+        state.vx = state.vx * 0.4 + instantVx * 0.6;
+        state.vy = state.vy * 0.4 + instantVy * 0.6;
+
+        state.lastX = clientX;
+        state.lastY = clientY;
+        state.lastTime = now;
+
+        setCamera((prev) => {
+          const next = { ...prev, x: prev.x + dx, y: prev.y + dy };
+          cameraRef.current = next;
+          return next;
+        });
+      } else if (e.touches.length === 2) {
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const rect = canvas.getBoundingClientRect();
+        const x1 = t1.clientX - rect.left;
+        const y1 = t1.clientY - rect.top;
+        const x2 = t2.clientX - rect.left;
+        const y2 = t2.clientY - rect.top;
+
+        const currentDist = Math.hypot(x2 - x1, y2 - y1);
+        const currentCenter = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
+
+        if (state.mode !== 'pinch') {
+          state.mode = 'pinch';
+          state.pinchStartDist = Math.max(currentDist, 10);
+          state.pinchStartZoom = cameraRef.current.zoom;
+          state.pinchStartCenter = currentCenter;
+          state.pinchStartCamera = { x: cameraRef.current.x, y: cameraRef.current.y };
+          state.lastTime = now;
+          return;
+        }
+
+        const scale = currentDist / state.pinchStartDist;
+        const targetZoom = Math.min(Math.max(state.pinchStartZoom * scale, 0.35), 2.5);
+
+        const worldCenterX = (state.pinchStartCenter.x - state.pinchStartCamera.x) / state.pinchStartZoom;
+        const worldCenterY = (state.pinchStartCenter.y - state.pinchStartCamera.y) / state.pinchStartZoom;
+
+        const newCameraX = currentCenter.x - worldCenterX * targetZoom;
+        const newCameraY = currentCenter.y - worldCenterY * targetZoom;
+
+        setCamera(() => {
+          const next = { x: newCameraX, y: newCameraY, zoom: targetZoom };
+          cameraRef.current = next;
+          return next;
+        });
+
+        state.lastTime = now;
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      const state = touchStateRef.current;
+
+      if (e.touches.length === 0) {
+        if (state.mode === 'pan' && !state.hasMoved && Date.now() - state.startTime < 350) {
+          // タップ確定：ノードまたはブランチの選択
+          performHitTest(state.startX, state.startY, true);
+        } else if (state.mode === 'pan' && state.hasMoved) {
+          // スワイプ終了：慣性スクロール（Momentum Glide）
+          const speed = Math.hypot(state.vx, state.vy);
+          if (speed > 0.12) {
+            let curVx = Math.max(Math.min(state.vx * 15, 38), -38);
+            let curVy = Math.max(Math.min(state.vy * 15, 38), -38);
+
+            const step = () => {
+              curVx *= 0.92;
+              curVy *= 0.92;
+
+              if (Math.hypot(curVx, curVy) < 0.2) {
+                momentumAnimRef.current = null;
+                return;
+              }
+
+              setCamera((prev) => {
+                const next = {
+                  ...prev,
+                  x: prev.x + curVx,
+                  y: prev.y + curVy,
+                };
+                cameraRef.current = next;
+                return next;
+              });
+
+              momentumAnimRef.current = requestAnimationFrame(step);
+            };
+
+            momentumAnimRef.current = requestAnimationFrame(step);
+          }
+        }
+
+        state.mode = 'none';
+        state.hasMoved = false;
+      } else if (e.touches.length === 1) {
+        // 2本指から1本指に切り替わった場合
+        const touch = e.touches[0];
+        const rect = canvas.getBoundingClientRect();
+        const clientX = touch.clientX - rect.left;
+        const clientY = touch.clientY - rect.top;
+
+        state.mode = 'pan';
+        state.lastX = clientX;
+        state.lastY = clientY;
+        state.startX = clientX;
+        state.startY = clientY;
+        state.hasMoved = true;
+        state.vx = 0;
+        state.vy = 0;
+        state.lastTime = performance.now();
+      }
+    };
+
+    const onTouchCancel = () => {
+      touchStateRef.current.mode = 'none';
+      touchStateRef.current.hasMoved = false;
+    };
+
+    canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+    canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+    canvas.addEventListener('touchcancel', onTouchCancel, { passive: false });
+
+    return () => {
+      canvas.removeEventListener('touchstart', onTouchStart);
+      canvas.removeEventListener('touchmove', onTouchMove);
+      canvas.removeEventListener('touchend', onTouchEnd);
+      canvas.removeEventListener('touchcancel', onTouchCancel);
+      stopMomentum();
+    };
+  }, [performHitTest, stopMomentum]);
+
+  // 特定のノードまたは最新のノードへカメラを中心配置
+  const focusOnNode = (targetNode?: OnigiriNode) => {
+    const nodeToFocus =
+      targetNode ||
+      (selectedNodeId ? nodes.find((n) => n.id === selectedNodeId) : nodes[nodes.length - 1]);
+    if (!nodeToFocus || !canvasRef.current) return;
+    stopMomentum();
+    const parentW = canvasRef.current.parentElement?.clientWidth || window.innerWidth;
+    const parentH = canvasRef.current.parentElement?.clientHeight || window.innerHeight;
+    const targetZoom = 1.0;
+    const targetX = parentW / 2 - nodeToFocus.position.x * targetZoom;
+    const targetY = parentH / 2 - nodeToFocus.position.y * targetZoom;
+    const nextCam = { x: targetX, y: targetY, zoom: targetZoom };
+    cameraRef.current = nextCam;
+    setCamera(nextCam);
   };
 
   const drawSparkleCross = (
@@ -1050,7 +1364,7 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
   }, [nodes, camera, selectedNodeId, selectedBranchId, showCounterfactual]);
 
   return (
-    <div className="relative w-full h-full overflow-hidden select-none bg-[#020307]">
+    <div className="relative w-full h-full overflow-hidden select-none bg-[#020307] touch-none">
       <canvas
         ref={canvasRef}
         onClick={handleCanvasClick}
@@ -1059,38 +1373,77 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
         onWheel={handleWheel}
-        className="w-full h-full cursor-grab active:cursor-grabbing block"
+        style={{ touchAction: 'none' }}
+        className="w-full h-full cursor-grab active:cursor-grabbing block touch-none"
       />
 
-      {/* 画面内クイック操作コントローラー */}
-      <div className="absolute bottom-6 left-6 flex items-center gap-2 bg-slate-900/85 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-slate-700/60 shadow-[0_0_20px_rgba(0,0,0,0.6)] text-xs text-slate-300">
+      {/* スマホ・タブレット向けタッチ操作ヒントバッジ */}
+      <div className="absolute top-4 left-4 flex md:hidden items-center gap-1.5 px-3 py-1.5 bg-slate-950/85 backdrop-blur-md border border-slate-800 rounded-full text-[11px] font-mono text-cyan-300 pointer-events-none z-10 shadow-lg animate-in fade-in duration-300">
+        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+        <span>1本指スワイプ: 移動</span>
+        <span className="text-slate-600">|</span>
+        <span>2本指: 拡大縮小</span>
+      </div>
+
+      {/* 画面内クイック操作コントローラー（スマホ・タブレットのタッチに最適化） */}
+      <div className="absolute bottom-4 left-4 sm:bottom-6 sm:left-6 flex items-center gap-1 sm:gap-2 bg-slate-900/90 backdrop-blur-md px-3 py-2 rounded-2xl border border-slate-700/60 shadow-[0_0_25px_rgba(0,0,0,0.7)] text-xs text-slate-300 z-10 touch-auto">
         <button
-          onClick={() => setCamera((c) => ({ ...c, zoom: Math.min(c.zoom * 1.15, 2.5) }))}
-          className="p-1.5 hover:bg-slate-800 rounded-lg transition font-mono font-bold text-slate-200"
+          onClick={() => {
+            stopMomentum();
+            setCamera((c) => {
+              const next = { ...c, zoom: Math.min(c.zoom * 1.2, 2.5) };
+              cameraRef.current = next;
+              return next;
+            });
+          }}
+          className="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center hover:bg-slate-800 active:bg-slate-700 rounded-lg transition font-mono font-bold text-slate-200 text-sm"
           title="拡大"
+          aria-label="拡大"
         >
           ＋
         </button>
-        <span className="font-mono text-cyan-400 min-w-[3.2rem] text-center font-bold">
+        <span className="font-mono text-cyan-400 min-w-[2.8rem] sm:min-w-[3.2rem] text-center font-bold text-xs">
           {Math.round(camera.zoom * 100)}%
         </span>
         <button
-          onClick={() => setCamera((c) => ({ ...c, zoom: Math.max(c.zoom * 0.85, 0.35) }))}
-          className="p-1.5 hover:bg-slate-800 rounded-lg transition font-mono font-bold text-slate-200"
+          onClick={() => {
+            stopMomentum();
+            setCamera((c) => {
+              const next = { ...c, zoom: Math.max(c.zoom * 0.8, 0.35) };
+              cameraRef.current = next;
+              return next;
+            });
+          }}
+          className="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center hover:bg-slate-800 active:bg-slate-700 rounded-lg transition font-mono font-bold text-slate-200 text-sm"
           title="縮小"
+          aria-label="縮小"
         >
           −
         </button>
-        <div className="w-[1px] h-4 bg-slate-700 mx-1" />
+        <div className="w-[1px] h-4 bg-slate-700 mx-0.5" />
         <button
-          onClick={() => setCamera({ x: 120, y: 140, zoom: 0.95 })}
-          className="px-2.5 py-1 hover:bg-slate-800 rounded-lg transition text-slate-300 hover:text-white"
+          onClick={() => {
+            stopMomentum();
+            const resetCam = { x: 120, y: 140, zoom: 0.95 };
+            cameraRef.current = resetCam;
+            setCamera(resetCam);
+          }}
+          className="px-2.5 py-1.5 hover:bg-slate-800 active:bg-slate-700 rounded-lg transition text-slate-300 hover:text-white text-xs whitespace-nowrap"
         >
-          全体表示
+          全体
         </button>
+        {nodes.length > 0 && (
+          <button
+            onClick={() => focusOnNode()}
+            className="px-2.5 py-1.5 hover:bg-cyan-950/70 active:bg-cyan-900 rounded-lg transition text-cyan-300 border border-cyan-800/60 text-xs whitespace-nowrap font-medium"
+            title="選択中または最新の量子へジャンプ"
+          >
+            現在地
+          </button>
+        )}
       </div>
 
-      <div className="absolute bottom-6 right-6 hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-950/70 backdrop-blur-md border border-slate-800 rounded-xl text-[11px] font-mono text-slate-400">
+      <div className="absolute bottom-4 right-4 sm:bottom-6 sm:right-6 hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-950/70 backdrop-blur-md border border-slate-800 rounded-xl text-[11px] font-mono text-slate-400">
         <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
         <span>Quantum Node: Polarized Quantum Orb</span>
       </div>

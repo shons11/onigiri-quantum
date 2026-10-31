@@ -165,13 +165,13 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               {lives.map((life) => (
                 <div
                   key={life.id}
-                  className="group relative flex items-center justify-between p-4 rounded-xl bg-slate-900/70 hover:bg-slate-900 border border-slate-800/90 hover:border-cyan-500/50 transition duration-200"
+                  className="group relative flex flex-col sm:flex-row items-stretch sm:items-center justify-between p-4 rounded-xl bg-slate-900/70 hover:bg-slate-900 border border-slate-800/90 hover:border-cyan-500/50 transition duration-200 gap-3"
                 >
                   <div
                     onClick={() => onResumeLife(life.id)}
-                    className="flex-1 cursor-pointer pr-4"
+                    className="flex-1 cursor-pointer"
                   >
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="font-bold text-sm text-white group-hover:text-cyan-300 transition">
                         {life.title}
                       </span>
@@ -190,17 +190,17 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 justify-end pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800/60">
                     <button
                       onClick={() => onResumeLife(life.id)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-950 hover:bg-cyan-900 border border-cyan-800/80 text-cyan-300 transition"
+                      className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 sm:py-1.5 rounded-lg text-xs font-semibold bg-cyan-950 hover:bg-cyan-900 active:bg-cyan-800 border border-cyan-800/80 text-cyan-300 transition"
                     >
                       <span>世界線を再開</span>
                       <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => onDeleteLife(life.id, life.title)}
-                      className="p-2 text-slate-500 hover:text-red-400 rounded-lg hover:bg-red-950/40 transition"
+                      className="p-2 text-slate-500 hover:text-red-400 active:text-red-300 rounded-lg hover:bg-red-950/40 transition"
                       title="この世界線を削除"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
