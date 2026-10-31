@@ -1048,6 +1048,32 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
         }
       }
 
+      // 1.5. 未来の揺らぎ（未接続量子）エリアの描画
+      const futureNodes = nodes.filter((n) => n.isFutureFluctuation);
+      if (futureNodes.length > 0) {
+        ctx.save();
+        const minX = Math.min(...futureNodes.map((n) => n.position.x)) - 60;
+        const maxX = Math.max(...futureNodes.map((n) => n.position.x + 360)) + 60;
+        const areaY = Math.min(...futureNodes.map((n) => n.position.y)) - 65;
+        const areaH = 220;
+
+        ctx.beginPath();
+        ctx.roundRect(minX, areaY, Math.max(maxX - minX, 480), areaH, 18);
+        ctx.fillStyle = 'rgba(88, 28, 135, 0.12)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(168, 85, 247, 0.35)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([6, 6]);
+        ctx.stroke();
+
+        ctx.font = 'bold 11px "Space Grotesk", sans-serif';
+        ctx.fillStyle = 'rgba(216, 180, 254, 0.85)';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText('✦ 未来の揺らぎ（未接続の浮遊量子プール）', minX + 16, areaY + 12);
+        ctx.restore();
+      }
+
       // 2. 世界線（エッジ：親ノードから子ノードへの接続）
       // - 親が observed の場合：
       //   親の DECIDED 枠から子ノードへの接続線を描画。
@@ -1330,6 +1356,19 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
           time,
           milestoneText
         );
+
+        // 未来の揺らぎノードの頭上バッジ
+        if (node.isFutureFluctuation) {
+          ctx.save();
+          ctx.font = 'bold 9.5px "Space Grotesk", sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.fillStyle = '#c084fc';
+          ctx.shadowColor = '#a855f7';
+          ctx.shadowBlur = 8;
+          ctx.fillText('✦ 未来の揺らぎ', node.position.x, node.position.y - 34);
+          ctx.restore();
+        }
 
         // ノード名ラベル
         ctx.save();

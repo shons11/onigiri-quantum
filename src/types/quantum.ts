@@ -84,6 +84,8 @@ export interface OnigiriNode {
   originBranchId?: string;
   /** 過去の決断間にレトロアクティブに挿入されたノードかどうか */
   isInsertedRetroactive?: boolean;
+  /** 未来の揺らぎ（接続元・接続先のない未接続の浮遊量子ノード） */
+  isFutureFluctuation?: boolean;
   /** この決断ノードにおける選択肢群 */
   branches: QuantumBranch[];
   /** 採択された選択肢ID（state === 'observed' のとき確定） */

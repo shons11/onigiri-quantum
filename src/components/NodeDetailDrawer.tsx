@@ -131,7 +131,12 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
         className="p-4 border-b border-slate-800/80 flex items-center justify-between bg-slate-900/60"
       >
         <div className="flex items-center gap-2">
-          {isCounterfactualBranch ? (
+          {node.isFutureFluctuation ? (
+            <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-purple-300 bg-purple-950/80 px-2 py-0.5 rounded border border-purple-700">
+              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              <span>未来の揺らぎ（浮遊量子）</span>
+            </div>
+          ) : isCounterfactualBranch ? (
             <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-rose-400 bg-rose-950/70 px-2 py-0.5 rounded border border-rose-800">
               <GitFork className="w-3.5 h-3.5" />
               <span>IFの世界線（Counterfactual）</span>
@@ -269,10 +274,10 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
                 className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-[0_0_20px_rgba(168,85,247,0.4)] transition"
               >
                 <Sparkles className="w-4 h-4 text-purple-200" />
-                <span>過去の量子揺らぎを追加 (New Quantum)</span>
+                <span>New Quantum</span>
               </button>
               <p className="text-[11px] text-purple-300/80 text-center leading-relaxed">
-                この決断と次の量子の間に、未確定の量子揺らぎを点線で挿入します。
+                この決断の直後に、新しい量子を接続・配置します。
               </p>
             </div>
           </div>
@@ -365,7 +370,7 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
                       className="mt-2.5 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-purple-900/50 hover:bg-purple-800/70 border border-purple-700/60 text-[11px] font-semibold text-purple-200 transition"
                     >
                       <Sparkles className="w-3.5 h-3.5 text-purple-300" />
-                      <span>この直後に過去の量子揺らぎを追加</span>
+                      <span>New Quantum</span>
                     </button>
                   </div>
                 ))}

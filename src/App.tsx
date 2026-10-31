@@ -29,7 +29,8 @@ import {
 import { Header } from './components/Header';
 import { CosmicCanvas, getBranchLayout } from './components/CosmicCanvas';
 import { ObservationModal } from './components/ObservationModal';
-import { NewSuperpositionModal, TargetInsertion } from './components/NewSuperpositionModal';
+import { NewSuperpositionModal, ConnectionConfig } from './components/NewSuperpositionModal';
+import { Sparkles, Plus } from 'lucide-react';
 import { NodeDetailDrawer } from './components/NodeDetailDrawer';
 import { EntanglementModal } from './components/EntanglementModal';
 import { GuideModal } from './components/GuideModal';
@@ -63,8 +64,17 @@ export default function App() {
   // モーダル表示状態
   const [isNewLifeModalOpen, setIsNewLifeModalOpen] = useState(false);
   const [observationNode, setObservationNode] = useState<OnigiriNode | null>(null);
-  const [isNewSuperpositionOpen, setIsNewSuperpositionOpen] = useState(false);
-  const [targetInsertion, setTargetInsertion] = useState<TargetInsertion | null>(null);
+  const [superpositionModalConfig, setSuperpositionModalConfig] = useState<{
+    isOpen: boolean;
+    sourceNodeId: string | null;
+    targetNodeId: string | null;
+    originBranchId?: string | null;
+  }>({
+    isOpen: false,
+    sourceNodeId: null,
+    targetNodeId: null,
+    originBranchId: null,
+  });
   const [isEntanglementOpen, setIsEntanglementOpen] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
 
@@ -249,15 +259,19 @@ export default function App() {
     setObservationNode(null);
   };
 
-  // 過去の決定（Decided）からのレトロアクティブ量子揺らぎ挿入
+  // 決定（Decided）からのレトロアクティブ量子揺らぎ挿入またはNew Quantum
   const handleOpenInsertRetroactive = (parentNode: OnigiriNode, branch: QuantumBranch) => {
     const nextNode =
       worldLine.nodes.find(
         (n) => n.parentId === parentNode.id && (n.originBranchId === branch.id || !n.originBranchId)
       ) || null;
 
-    setTargetInsertion({ parentNode, branch, nextNode });
-    setIsNewSuperpositionOpen(true);
+    setSuperpositionModalConfig({
+      isOpen: true,
+      sourceNodeId: parentNode.id,
+      targetNodeId: nextNode ? nextNode.id : null,
+      originBranchId: branch.id,
+    });
   };
 
   // 新規重ね合わせ（New Quantum）の作成
@@ -266,57 +280,85 @@ export default function App() {
     category: OnigiriNode['category'],
     branchInputs: { label: string; description: string; probability: number }[],
     tags: string[],
-    targetInsert?: TargetInsertion | null
+    connections: ConnectionConfig
   ) => {
     setWorldLine((prev) => {
-      const insertion = targetInsert !== undefined ? targetInsert : targetInsertion;
+      const { sourceNodeId, targetNodeId, originBranchId } = connections;
+      const newNodeId = `node-${Date.now()}`;
+      const branches: QuantumBranch[] = branchInputs.map((b, i) => ({
+        id: `b-${newNodeId}-${i + 1}`,
+        label: b.label,
+        description: b.description,
+        status: 'superposed',
+        probabilityAmplitude: b.probability,
+      }));
 
-      if (insertion) {
-        const { parentNode, branch, nextNode } = insertion;
-        const currentParent = prev.nodes.find((n) => n.id === parentNode.id) || parentNode;
-        const currentNext = nextNode ? prev.nodes.find((n) => n.id === nextNode.id) || nextNode : null;
+      // Case 1: 接続元・接続先が共に空白 -> 「未来の揺らぎ」 (Future Fluctuation)
+      if (!sourceNodeId && !targetNodeId) {
+        const existingFuture = prev.nodes.filter((n) => n.isFutureFluctuation);
+        const count = existingFuture.length;
+        const newX = 280 + count * 440;
+        const newY = 80;
 
-        const branchIndex = currentParent.branches.findIndex((b) => b.id === branch.id);
-        const branchPos = getBranchLayout(
-          currentParent.position.x,
-          currentParent.position.y,
-          branchIndex >= 0 ? branchIndex : 0,
-          currentParent.branches.length
-        );
-
-        const newX = currentParent.position.x + 440;
-        const newY = branchPos.y;
-
-        const newNodeId = `node-${Date.now()}`;
-        const branches: QuantumBranch[] = branchInputs.map((b, i) => ({
-          id: `b-${newNodeId}-${i + 1}`,
-          label: b.label,
-          description: b.description,
-          status: 'superposed',
-          probabilityAmplitude: b.probability,
-        }));
-
-        const newNode: OnigiriNode = {
+        const newFutureNode: OnigiriNode = {
           id: newNodeId,
           title,
           category,
           state: 'superposition',
-          flavor: 'classic-salt',
+          flavor: 'cosmic-nori',
           position: { x: newX, y: newY },
-          parentId: currentParent.id,
-          originBranchId: branch.id,
-          isInsertedRetroactive: true,
+          parentId: null,
+          isFutureFluctuation: true,
           branches,
           createdAt: new Date().toISOString(),
-          tags: tags.length > 0 ? tags : ['過去量子揺らぎ', '追記決断'],
+          tags: tags.length > 0 ? tags : ['未来の揺らぎ', '未接続量子'],
         };
 
-        let updatedNodes = [...prev.nodes];
+        return {
+          ...prev,
+          nodes: [...prev.nodes, newFutureNode],
+        };
+      }
 
-        if (currentNext) {
+      // Case 2: 接続元があり、接続先もある -> 2つの量子の間に挿入 (Insertion)
+      if (sourceNodeId && targetNodeId) {
+        const sourceNode = prev.nodes.find((n) => n.id === sourceNodeId);
+        const targetNode = prev.nodes.find((n) => n.id === targetNodeId);
+
+        if (sourceNode && targetNode) {
+          const branchIdx = originBranchId
+            ? sourceNode.branches.findIndex((b) => b.id === originBranchId)
+            : 0;
+          const branchPos = getBranchLayout(
+            sourceNode.position.x,
+            sourceNode.position.y,
+            branchIdx >= 0 ? branchIdx : 0,
+            sourceNode.branches.length
+          );
+
+          const newX = sourceNode.position.x + 440;
+          const newY = branchPos.y;
+
+          const newNode: OnigiriNode = {
+            id: newNodeId,
+            title,
+            category,
+            state: 'superposition',
+            flavor: 'classic-salt',
+            position: { x: newX, y: newY },
+            parentId: sourceNode.id,
+            originBranchId: originBranchId || undefined,
+            isInsertedRetroactive: true,
+            isFutureFluctuation: false,
+            branches,
+            createdAt: new Date().toISOString(),
+            tags: tags.length > 0 ? tags : ['挿入量子', '世界線分岐'],
+          };
+
+          // targetNode およびその子孫ノードを X 方向へシフト (+440)
           const descendantIds = new Set<string>();
-          const queue = [currentNext.id];
-          descendantIds.add(currentNext.id);
+          const queue = [targetNode.id];
+          descendantIds.add(targetNode.id);
           while (queue.length > 0) {
             const currId = queue.shift()!;
             for (const n of prev.nodes) {
@@ -327,12 +369,13 @@ export default function App() {
             }
           }
 
-          updatedNodes = updatedNodes.map((n) => {
-            if (n.id === currentNext.id) {
+          const updatedNodes = prev.nodes.map((n) => {
+            if (n.id === targetNode.id) {
               return {
                 ...n,
                 parentId: newNodeId,
                 originBranchId: undefined,
+                isFutureFluctuation: false,
                 position: { ...n.position, x: n.position.x + 440 },
               };
             }
@@ -344,7 +387,105 @@ export default function App() {
             }
             return n;
           });
+
+          return {
+            ...prev,
+            nodes: [...updatedNodes, newNode],
+          };
         }
+      }
+
+      // Case 3: 接続元があり、接続先が空白 -> 先端への追加 (Tip Addition)
+      if (sourceNodeId && !targetNodeId) {
+        const sourceNode = prev.nodes.find((n) => n.id === sourceNodeId);
+        let newX = 280;
+        let newY = 340;
+
+        if (sourceNode) {
+          newX = sourceNode.position.x + 440;
+          const numParentBranches = sourceNode.branches.length;
+          let branchIndex = originBranchId
+            ? sourceNode.branches.findIndex((b) => b.id === originBranchId)
+            : sourceNode.branches.findIndex((b) => b.id === sourceNode.actualizedBranchId);
+          if (branchIndex === -1) branchIndex = 0;
+          const stepY = 80;
+          const offsetY = (branchIndex - (numParentBranches - 1) / 2) * stepY;
+          newY = sourceNode.position.y + offsetY;
+        }
+
+        const newNode: OnigiriNode = {
+          id: newNodeId,
+          title,
+          category,
+          state: 'superposition',
+          flavor: 'classic-salt',
+          position: { x: newX, y: newY },
+          parentId: sourceNode ? sourceNode.id : null,
+          originBranchId: originBranchId || undefined,
+          isFutureFluctuation: false,
+          branches,
+          createdAt: new Date().toISOString(),
+          tags: tags.length > 0 ? tags : ['新規決断'],
+        };
+
+        return {
+          ...prev,
+          nodes: [...prev.nodes, newNode],
+        };
+      }
+
+      // Case 4: 接続元が空白で、接続先がある場合
+      if (!sourceNodeId && targetNodeId) {
+        const targetNode = prev.nodes.find((n) => n.id === targetNodeId);
+        const newX = targetNode ? targetNode.position.x : 280;
+        const newY = targetNode ? targetNode.position.y : 340;
+
+        const newNode: OnigiriNode = {
+          id: newNodeId,
+          title,
+          category,
+          state: 'superposition',
+          flavor: 'classic-salt',
+          position: { x: newX, y: newY },
+          parentId: null,
+          isFutureFluctuation: false,
+          branches,
+          createdAt: new Date().toISOString(),
+          tags: tags.length > 0 ? tags : ['新規根量子'],
+        };
+
+        const descendantIds = new Set<string>();
+        if (targetNode) {
+          const queue = [targetNode.id];
+          descendantIds.add(targetNode.id);
+          while (queue.length > 0) {
+            const currId = queue.shift()!;
+            for (const n of prev.nodes) {
+              if (n.parentId === currId && !descendantIds.has(n.id)) {
+                descendantIds.add(n.id);
+                queue.push(n.id);
+              }
+            }
+          }
+        }
+
+        const updatedNodes = prev.nodes.map((n) => {
+          if (targetNode && n.id === targetNode.id) {
+            return {
+              ...n,
+              parentId: newNodeId,
+              isFutureFluctuation: false,
+              position: { ...n.position, x: n.position.x + 440 },
+            };
+          }
+          if (descendantIds.has(n.id)) {
+            return {
+              ...n,
+              position: { ...n.position, x: n.position.x + 440 },
+            };
+          }
+          return n;
+        });
 
         return {
           ...prev,
@@ -352,59 +493,15 @@ export default function App() {
         };
       }
 
-      // 末尾への新規量子ノード追加
-      const parentNode = selectedNode || prev.nodes[prev.nodes.length - 1] || null;
-      let newX = 280;
-      let newY = 340;
-      if (parentNode) {
-        newX = parentNode.position.x + 440;
-        const numParentBranches = parentNode.branches.length;
-        if (numParentBranches <= 1) {
-          newY = parentNode.position.y;
-        } else {
-          let branchIndex = parentNode.branches.findIndex(
-            (b) => b.id === parentNode.actualizedBranchId
-          );
-          if (branchIndex === -1 && selectedBranchId) {
-            branchIndex = parentNode.branches.findIndex((b) => b.id === selectedBranchId);
-          }
-          if (branchIndex === -1) branchIndex = 0;
-          const stepY = 80;
-          const offsetY = (branchIndex - (numParentBranches - 1) / 2) * stepY;
-          newY = parentNode.position.y + offsetY;
-        }
-      }
-
-      const newNodeId = `node-${Date.now()}`;
-      const branches: QuantumBranch[] = branchInputs.map((b, i) => ({
-        id: `b-${newNodeId}-${i + 1}`,
-        label: b.label,
-        description: b.description,
-        status: 'superposed',
-        probabilityAmplitude: b.probability,
-      }));
-
-      const newNode: OnigiriNode = {
-        id: newNodeId,
-        title,
-        category,
-        state: 'superposition',
-        flavor: 'classic-salt',
-        position: { x: newX, y: newY },
-        parentId: parentNode ? parentNode.id : null,
-        branches,
-        createdAt: new Date().toISOString(),
-        tags: tags.length > 0 ? tags : ['新規決断'],
-      };
-
-      return {
-        ...prev,
-        nodes: [...prev.nodes, newNode],
-      };
+      return prev;
     });
 
-    setIsNewSuperpositionOpen(false);
-    setTargetInsertion(null);
+    setSuperpositionModalConfig({
+      isOpen: false,
+      sourceNodeId: null,
+      targetNodeId: null,
+      originBranchId: null,
+    });
   };
 
   const handleAddBranchToNode = (nodeId: string, label: string, description: string) => {
@@ -490,6 +587,7 @@ export default function App() {
   const selectedNode = worldLine.nodes.find((n) => n.id === selectedNodeId) || null;
   const selectedBranch = selectedNode?.branches.find((b) => b.id === selectedBranchId) || null;
   const currentQuantumLog = worldLine.logs.find((l) => l.nodeId === selectedNodeId) || null;
+  const futureNodes = worldLine.nodes.filter((n) => n.isFutureFluctuation);
 
   // 画面表示判定：タイトル画面または量子空間
   if (currentView === 'title' || !currentLifeId) {
@@ -521,19 +619,35 @@ export default function App() {
         totalQuanta={worldLine.totalQuanta}
         onReturnToTitle={handleReturnToTitle}
         onOpenNewSuperposition={() => {
-          if (selectedBranch && selectedBranch.status === 'actualized' && selectedNode) {
-            handleOpenInsertRetroactive(selectedNode, selectedBranch);
-          } else if (selectedNode && selectedNode.state === 'observed') {
-            const decidedBranch = selectedNode.branches.find((b) => b.status === 'actualized');
-            if (decidedBranch) {
-              handleOpenInsertRetroactive(selectedNode, decidedBranch);
-              return;
-            }
-            setTargetInsertion(null);
-            setIsNewSuperpositionOpen(true);
+          if (selectedNode) {
+            // ノードが選択されている場合、そのノードを接続元にし、接続先は次のノード（あれば）または空白
+            const actualizedBranch = selectedNode.branches.find((b) => b.status === 'actualized');
+            const branchToUse =
+              selectedBranch && selectedBranch.status === 'actualized'
+                ? selectedBranch
+                : actualizedBranch;
+            const nextNode =
+              worldLine.nodes.find(
+                (n) =>
+                  n.parentId === selectedNode.id &&
+                  (!branchToUse || n.originBranchId === branchToUse.id || !n.originBranchId)
+              ) || null;
+
+            setSuperpositionModalConfig({
+              isOpen: true,
+              sourceNodeId: selectedNode.id,
+              targetNodeId: nextNode ? nextNode.id : null,
+              originBranchId: branchToUse?.id || null,
+            });
           } else {
-            setTargetInsertion(null);
-            setIsNewSuperpositionOpen(true);
+            // 要件3: すでに作成されている量子をクリックせずにホームのNew Quantumを選択した際、
+            // デフォルトで接続元、接続先を空白にして表示
+            setSuperpositionModalConfig({
+              isOpen: true,
+              sourceNodeId: null,
+              targetNodeId: null,
+              originBranchId: null,
+            });
           }
         }}
         onOpenEntanglementDemo={() => setIsEntanglementOpen(true)}
@@ -542,6 +656,106 @@ export default function App() {
 
       {/* 2. メイン量子空間キャンバス */}
       <main className="flex-1 relative w-full h-full overflow-hidden">
+        {/* 要件3: 「未来の揺らぎ」エリア (Future Fluctuations Area) */}
+        {futureNodes.length > 0 ? (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 max-w-[94vw] sm:max-w-2xl z-20 pointer-events-auto">
+            <div className="bg-slate-950/90 border border-purple-500/50 backdrop-blur-xl rounded-2xl shadow-[0_0_25px_rgba(168,85,247,0.3)] p-2.5 sm:p-3 flex flex-col gap-2">
+              <div className="flex items-center justify-between px-1">
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-purple-500 via-pink-500 to-indigo-600 flex items-center justify-center text-white shadow-[0_0_8px_rgba(168,85,247,0.5)]">
+                    <Sparkles className="w-3 h-3" />
+                  </div>
+                  <span className="text-xs font-bold text-purple-200">
+                    未来の揺らぎエリア (Future Fluctuations)
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-900/90 text-purple-300 font-mono border border-purple-700/60 font-semibold">
+                    {futureNodes.length}件
+                  </span>
+                </div>
+                <button
+                  onClick={() => {
+                    setSelectedNodeId(null);
+                    setSelectedBranchId(null);
+                    setSuperpositionModalConfig({
+                      isOpen: true,
+                      sourceNodeId: null,
+                      targetNodeId: null,
+                      originBranchId: null,
+                    });
+                  }}
+                  className="text-[11px] text-purple-300 hover:text-white flex items-center gap-1 font-semibold hover:underline"
+                >
+                  <Plus className="w-3.5 h-3.5 text-purple-400" />
+                  <span>揺らぎを追加</span>
+                </button>
+              </div>
+
+              {/* 水平スクロールのカードリスト */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 scrollbar-thin">
+                {futureNodes.map((fn) => (
+                  <div
+                    key={fn.id}
+                    onClick={() => {
+                      setSelectedNodeId(fn.id);
+                      setSelectedBranchId(null);
+                    }}
+                    className={`shrink-0 px-3 py-2 rounded-xl border cursor-pointer transition flex items-center gap-2.5 ${
+                      selectedNodeId === fn.id
+                        ? 'bg-purple-950/80 border-purple-400 text-white shadow-[0_0_15px_rgba(192,132,252,0.4)]'
+                        : 'bg-slate-900/80 border-slate-700/80 hover:border-purple-500/60 text-slate-200 hover:bg-slate-800/80'
+                    }`}
+                  >
+                    <div className="w-2.5 h-2.5 rounded-full bg-purple-400 animate-pulse shadow-[0_0_6px_#c084fc]" />
+                    <div className="max-w-[120px] sm:max-w-[150px] truncate">
+                      <div className="text-xs font-bold truncate">{fn.title}</div>
+                      <div className="text-[9.5px] text-purple-300/80 font-mono">
+                        {fn.branches.length}選択肢 • {fn.state === 'observed' ? '確定' : '重ね合わせ'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // この未来の揺らぎノードを接続先として、既存の世界線ノードに接続
+                        setSuperpositionModalConfig({
+                          isOpen: true,
+                          sourceNodeId: worldLine.nodes.find((n) => !n.isFutureFluctuation)?.id || null,
+                          targetNodeId: fn.id,
+                          originBranchId: null,
+                        });
+                      }}
+                      className="text-[9.5px] px-2 py-1 rounded-lg bg-purple-900/70 hover:bg-purple-800 text-purple-200 border border-purple-600/60 shrink-0 ml-1 font-medium transition"
+                      title="世界線へ接続"
+                    >
+                      接続
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 pointer-events-auto">
+            <button
+              onClick={() => {
+                setSelectedNodeId(null);
+                setSelectedBranchId(null);
+                setSuperpositionModalConfig({
+                  isOpen: true,
+                  sourceNodeId: null,
+                  targetNodeId: null,
+                  originBranchId: null,
+                });
+              }}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-950/70 hover:bg-slate-900/90 border border-slate-800/90 text-[11px] text-slate-400 hover:text-purple-300 transition shadow-lg backdrop-blur"
+              title="接続元・先を空白にして新しい未来の揺らぎを作成"
+            >
+              <Sparkles className="w-3 h-3 text-purple-400" />
+              <span>未来の揺らぎ: 0件（空白New Quantumで追加）</span>
+            </button>
+          </div>
+        )}
+
         <CosmicCanvas
           nodes={worldLine.nodes}
           selectedNodeId={selectedNodeId}
@@ -583,15 +797,20 @@ export default function App() {
         />
       )}
 
-      {isNewSuperpositionOpen && (
+      {superpositionModalConfig.isOpen && (
         <NewSuperpositionModal
-          parentNode={targetInsertion?.parentNode || selectedNode}
-          targetInsertion={targetInsertion}
+          existingNodes={worldLine.nodes}
+          initialSourceNodeId={superpositionModalConfig.sourceNodeId}
+          initialTargetNodeId={superpositionModalConfig.targetNodeId}
+          initialOriginBranchId={superpositionModalConfig.originBranchId}
           onClose={() => {
-            setIsNewSuperpositionOpen(false);
-            setTargetInsertion(null);
+            setSuperpositionModalConfig({
+              isOpen: false,
+              sourceNodeId: null,
+              targetNodeId: null,
+              originBranchId: null,
+            });
           }}
-          onClearTargetInsertion={() => setTargetInsertion(null)}
           onCreateSuperposition={handleCreateSuperposition}
         />
       )}
