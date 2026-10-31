@@ -86,6 +86,12 @@ export interface OnigiriNode {
   isInsertedRetroactive?: boolean;
   /** 未来の揺らぎ（接続元・接続先のない未接続の浮遊量子ノード） */
   isFutureFluctuation?: boolean;
+  /** ノード種別: 'quantum'（重ね合わせ/決断量子）または 'fact'（確定した事実） */
+  nodeType?: 'quantum' | 'fact';
+  /** 事実ノードかどうか（揺らぎを持たずに作成されたノード） */
+  isFact?: boolean;
+  /** 静止描画用の固定表示角度（ノード固有のランダム角） */
+  fixedAngle?: number;
   /** この決断ノードにおける選択肢群 */
   branches: QuantumBranch[];
   /** 採択された選択肢ID（state === 'observed' のとき確定） */

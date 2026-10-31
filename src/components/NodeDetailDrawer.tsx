@@ -1,6 +1,10 @@
 /**
  * @file src/components/NodeDetailDrawer.tsx
- * @description ノード＆IF枝線の詳細ドロワー：1quantumログの閲覧、後からの選択肢追加、IF世界線への振り返りメモ
+ * @description ノード＆IF枝線の詳細ドロワー
+ * - 1quantumログの閲覧、後からの選択肢追加、IF世界線への振り返りメモ
+ * - 作成済みの量子の編集機能（「揺らぎ状態に戻す」ボタン）：実線から点線に戻し、再確定可能にする
+ * - 量子・事実の削除機能：削除すると前後の接続元と接続先が直接再接続される
+ * - 「事実 (Fact)」ノードの専用表示
  */
 
 import React, { useState } from 'react';
@@ -14,6 +18,9 @@ import {
   Calendar,
   Activity,
   Plus,
+  RotateCcw,
+  Trash2,
+  FileCheck,
 } from 'lucide-react';
 
 interface NodeDetailDrawerProps {
@@ -29,7 +36,9 @@ interface NodeDetailDrawerProps {
     notes: string
   ) => void;
   onAddBranchToNode: (nodeId: string, label: string, description: string) => void;
-  onOpenInsertRetroactive?: (node: OnigiriNode, branch: QuantumBranch) => void;
+  onOpenInsertRetroactive?: (node: OnigiriNode, branch?: QuantumBranch) => void;
+  onRevertToSuperposition?: (nodeId: string) => void;
+  onDeleteNode?: (nodeId: string) => void;
 }
 
 export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
@@ -41,6 +50,8 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
   onSaveCounterfactualInsight,
   onAddBranchToNode,
   onOpenInsertRetroactive,
+  onRevertToSuperposition,
+  onDeleteNode,
 }) => {
   if (!node) return null;
 
@@ -91,7 +102,6 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
     if (!touchStartPos.current) return;
     const t = e.touches[0];
     const dx = t.clientX - touchStartPos.current.x;
-    // 右スワイプで閉じる
     if (dx > 0) {
       setSwipeOffset(dx);
     }
@@ -113,7 +123,7 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
       }}
       className="absolute top-16 right-0 bottom-0 w-full sm:w-[420px] bg-slate-950/95 border-l border-slate-800 backdrop-blur-xl shadow-2xl z-30 flex flex-col overflow-hidden text-slate-200 animate-in slide-in-from-right duration-300"
     >
-      {/* スマホ用スワイプハンドル（右スワイプで閉じる） */}
+      {/* スマホ用スワイプハンドル */}
       <div
         onTouchStart={handleHeaderTouchStart}
         onTouchMove={handleHeaderTouchMove}
@@ -131,7 +141,12 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
         className="p-4 border-b border-slate-800/80 flex items-center justify-between bg-slate-900/60"
       >
         <div className="flex items-center gap-2">
-          {node.isFutureFluctuation ? (
+          {node.isFact ? (
+            <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-emerald-300 bg-emerald-950/80 px-2.5 py-0.5 rounded border border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]">
+              <FileCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>事実（FACT）</span>
+            </div>
+          ) : node.isFutureFluctuation ? (
             <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-purple-300 bg-purple-950/80 px-2 py-0.5 rounded border border-purple-700">
               <Sparkles className="w-3.5 h-3.5 text-purple-400" />
               <span>未来の揺らぎ（浮遊量子）</span>
@@ -188,9 +203,31 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
           </div>
         </div>
 
-        {/* 状態に応じたメインコンテンツ */}
-        {isCounterfactualBranch && selectedBranch ? (
-          /* --- A. IF世界線の振り返りモード --- */
+        {/* ------------------------------------------------------------- */}
+        {/* A. 事実 (Fact) ノードの場合の専用表示 */}
+        {/* ------------------------------------------------------------- */}
+        {node.isFact ? (
+          <div className="space-y-4">
+            <div className="bg-emerald-950/25 border border-emerald-500/40 p-4 rounded-2xl space-y-2">
+              <div className="flex items-center gap-2 text-xs text-emerald-300 font-bold">
+                <FileCheck className="w-4 h-4 text-emerald-400" />
+                <span>確固たる事実として記録されています</span>
+              </div>
+              <p className="text-xs text-emerald-200/80 leading-relaxed">
+                未確定な揺らぎ（可能性）を持たず、世界線の中で確定した出来事です。
+              </p>
+            </div>
+
+            <button
+              onClick={() => onOpenInsertRetroactive?.(node)}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-bold text-xs shadow-[0_0_15px_rgba(16,185,129,0.3)] transition"
+            >
+              <Sparkles className="w-4 h-4 text-slate-950" />
+              <span>New Quantum（この事実に続く量子・事実を追加）</span>
+            </button>
+          </div>
+        ) : isCounterfactualBranch && selectedBranch ? (
+          /* --- B. IF世界線の振り返りモード --- */
           <div className="space-y-5 bg-rose-950/15 border border-rose-900/30 p-4 rounded-2xl">
             <div>
               <span className="text-[11px] font-mono text-rose-400 uppercase tracking-wider block mb-1">
@@ -256,7 +293,7 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
             </div>
           </div>
         ) : isDecidedBranch && selectedBranch ? (
-          /* --- A2. 採択された（DECIDED）選択肢の詳細 ＆ 過去量子揺らぎの追加 --- */
+          /* --- C. 採択された（DECIDED）選択肢の詳細 ＆ 過去量子揺らぎの追加 --- */
           <div className="space-y-4 bg-cyan-950/20 border border-cyan-800/50 p-4 rounded-2xl">
             <div>
               <span className="text-[11px] font-mono text-cyan-400 uppercase tracking-wider block mb-1">
@@ -282,7 +319,7 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
             </div>
           </div>
         ) : isSuperposition ? (
-          /* --- B. 重ね合わせ（未確定）状態 --- */
+          /* --- D. 重ね合わせ（未確定）状態 --- */
           <div className="space-y-4">
             <div className="bg-purple-950/30 border border-purple-800/40 p-3 rounded-2xl">
               <div className="flex items-center gap-2 text-xs text-purple-300 font-bold">
@@ -310,6 +347,7 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
               </div>
             </div>
 
+            {/* 未確定状態での「今すぐ観測・決断を確定する」ボタン */}
             <button
               onClick={() => onOpenObservation(node)}
               className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold text-sm shadow-[0_0_20px_rgba(56,189,248,0.4)] transition"
@@ -319,7 +357,7 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
             </button>
           </div>
         ) : (
-          /* --- C. 確定済みノード --- */
+          /* --- E. 確定済みノード（Observed） --- */
           <div className="space-y-5">
             {quantumLog && (
               <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl space-y-2.5">
@@ -401,13 +439,30 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
                 </div>
               </div>
             )}
+
+            {/* ------------------------------------------------------------- */}
+            {/* 要件: 作成済みの量子の編集機能（「揺らぎ状態に戻す」ボタン） */}
+            {/* ------------------------------------------------------------- */}
+            <div className="pt-3 border-t border-slate-800 space-y-2">
+              <button
+                type="button"
+                onClick={() => onRevertToSuperposition?.(node.id)}
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-purple-950/60 hover:bg-purple-900/80 border border-purple-600/70 text-purple-200 font-bold text-xs shadow-md transition"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-purple-300" />
+                <span>揺らぎ状態に戻す</span>
+              </button>
+              <p className="text-[10.5px] text-purple-300/70 text-center leading-relaxed">
+                ※ 確定を取り消し、実線を点線の未確定（重ね合わせ）状態に戻します。
+              </p>
+            </div>
           </div>
         )}
 
         {/* ---------------------------------------------------------------- */}
-        {/* 後からでも「他の選択肢を追加」できる共通セクション */}
+        {/* 後からでも「他の選択肢を追加」できる共通セクション（事実以外） */}
         {/* ---------------------------------------------------------------- */}
-        {!selectedBranch && (
+        {!node.isFact && !selectedBranch && (
           <div className="pt-3 border-t border-slate-800/80">
             {!isAddingBranch ? (
               <button
@@ -463,11 +518,36 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
             )}
           </div>
         )}
+
+        {/* ---------------------------------------------------------------- */}
+        {/* 要件: 過去に作成した量子・事実の削除機能 */}
+        {/* 削除すると接続元と接続先が直接再接続される */}
+        {/* ---------------------------------------------------------------- */}
+        <div className="pt-4 border-t border-slate-800/80">
+          <button
+            type="button"
+            onClick={() => {
+              if (
+                window.confirm(
+                  `「${node.title}」を削除してもよろしいですか？\n削除すると、前後の接続元と接続先が直接つながります。`
+                )
+              ) {
+                onDeleteNode?.(node.id);
+              }
+            }}
+            className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-rose-950/30 hover:bg-rose-900/50 border border-rose-800/50 text-xs text-rose-300 hover:text-rose-100 transition"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+            <span>{node.isFact ? 'この事実を削除' : 'この量子を削除'}</span>
+          </button>
+        </div>
       </div>
 
       {/* フッター */}
       <div className="p-4 border-t border-slate-800/80 bg-slate-900/40 flex justify-between items-center text-xs">
-        <span className="text-slate-500 font-mono text-[11px]">Polarized Quantum Node</span>
+        <span className="text-slate-500 font-mono text-[11px]">
+          {node.isFact ? 'Fact Entity' : 'Polarized Quantum Node'}
+        </span>
         <button
           onClick={onClose}
           className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition"

@@ -135,15 +135,21 @@ export default function App() {
     setIsNewLifeModalOpen(false);
   };
 
-  // 過去の人生を再開（Resume）
+  // 過去の人生を再開（Resume: 全体キャンバスを表示）
   const handleResumeLife = (lifeId: string) => {
     const life = getLifeById(lifeId);
     if (life) {
       setCurrentLifeId(life.id);
       setCurrentLifeTitle(life.title);
       setWorldLine(life.worldLine);
-      setSelectedNodeId(life.worldLine.nodes[0]?.id || null);
+      setSelectedNodeId(null); // 全体キャンバスをまず表示（ドロワーや作成画面を開かない）
       setSelectedBranchId(null);
+      setSuperpositionModalConfig({
+        isOpen: false,
+        sourceNodeId: null,
+        targetNodeId: null,
+        originBranchId: null,
+      });
       setActiveLifeId(life.id);
       setCurrentView('space');
     }
@@ -259,22 +265,110 @@ export default function App() {
     setObservationNode(null);
   };
 
-  // 決定（Decided）からのレトロアクティブ量子揺らぎ挿入またはNew Quantum
-  const handleOpenInsertRetroactive = (parentNode: OnigiriNode, branch: QuantumBranch) => {
+  // 作成済みの量子を揺らぎ状態（重ね合わせ）に戻す機能
+  // 実線が点線状態に戻り、再度観測・確定が可能になる
+  const handleRevertToSuperposition = (nodeId: string) => {
+    setWorldLine((prev) => {
+      const nodeIndex = prev.nodes.findIndex((n) => n.id === nodeId);
+      if (nodeIndex === -1) return prev;
+
+      const targetNode = prev.nodes[nodeIndex];
+      // 揺らぎ（ブランチ）のステータスをすべて 'superposed' に戻す
+      const updatedBranches: QuantumBranch[] = targetNode.branches.map((b) => ({
+        ...b,
+        status: 'superposed',
+        counterfactualInsight: undefined,
+      }));
+
+      const updatedNode: OnigiriNode = {
+        ...targetNode,
+        state: 'superposition',
+        branches: updatedBranches,
+        actualizedBranchId: undefined,
+        quantumLogId: undefined,
+        observedAt: undefined,
+      };
+
+      const updatedNodes = [...prev.nodes];
+      updatedNodes[nodeIndex] = updatedNode;
+
+      // 該当ノードのログを削除
+      const updatedLogs = prev.logs.filter((l) => l.nodeId !== nodeId);
+      const nextQuanta = Math.max(0, prev.totalQuanta - 1);
+
+      return {
+        ...prev,
+        totalQuanta: nextQuanta,
+        nodes: updatedNodes,
+        logs: updatedLogs,
+      };
+    });
+  };
+
+  // 過去に作成した量子・事実の削除機能
+  // 削除すると、そのノードと枝が消去され、接続元と接続先が直接再接続される
+  const handleDeleteNode = (nodeId: string) => {
+    setWorldLine((prev) => {
+      const targetNode = prev.nodes.find((n) => n.id === nodeId);
+      if (!targetNode) return prev;
+
+      const parentId = targetNode.parentId;
+      const originBranchId = targetNode.originBranchId;
+
+      // このノードを親としていたすべての子ノードの接続先を、削除ノードの親へ付け替え
+      const updatedNodes = prev.nodes
+        .filter((n) => n.id !== nodeId)
+        .map((n) => {
+          if (n.parentId === nodeId) {
+            return {
+              ...n,
+              parentId: parentId,
+              // 親のブランチに接続していた場合は引き継ぐ
+              originBranchId: n.originBranchId || originBranchId || undefined,
+            };
+          }
+          return n;
+        });
+
+      const updatedLogs = prev.logs.filter(
+        (l) => l.nodeId !== nodeId && l.quantumId !== targetNode.quantumLogId
+      );
+
+      const wasObservedQuantum = targetNode.state === 'observed' && !targetNode.isFact;
+      const nextQuanta = wasObservedQuantum ? Math.max(0, prev.totalQuanta - 1) : prev.totalQuanta;
+
+      return {
+        ...prev,
+        totalQuanta: nextQuanta,
+        nodes: updatedNodes,
+        logs: updatedLogs,
+      };
+    });
+
+    if (selectedNodeId === nodeId) {
+      setSelectedNodeId(null);
+      setSelectedBranchId(null);
+    }
+  };
+
+  // 決定（Decided）または量子ノードからのレトロアクティブ量子揺らぎ挿入またはNew Quantum
+  const handleOpenInsertRetroactive = (parentNode: OnigiriNode, branch?: QuantumBranch) => {
     const nextNode =
       worldLine.nodes.find(
-        (n) => n.parentId === parentNode.id && (n.originBranchId === branch.id || !n.originBranchId)
+        (n) =>
+          n.parentId === parentNode.id &&
+          (!branch || n.originBranchId === branch.id || !n.originBranchId)
       ) || null;
 
     setSuperpositionModalConfig({
       isOpen: true,
       sourceNodeId: parentNode.id,
       targetNodeId: nextNode ? nextNode.id : null,
-      originBranchId: branch.id,
+      originBranchId: branch ? branch.id : null,
     });
   };
 
-  // 新規重ね合わせ（New Quantum）の作成
+  // 新規重ね合わせ（New Quantum）または事実（Fact）の作成
   const handleCreateSuperposition = (
     title: string,
     category: OnigiriNode['category'],
@@ -285,13 +379,17 @@ export default function App() {
     setWorldLine((prev) => {
       const { sourceNodeId, targetNodeId, originBranchId } = connections;
       const newNodeId = `node-${Date.now()}`;
-      const branches: QuantumBranch[] = branchInputs.map((b, i) => ({
-        id: `b-${newNodeId}-${i + 1}`,
-        label: b.label,
-        description: b.description,
-        status: 'superposed',
-        probabilityAmplitude: b.probability,
-      }));
+      const isFact = branchInputs.length === 0;
+
+      const branches: QuantumBranch[] = isFact
+        ? []
+        : branchInputs.map((b, i) => ({
+            id: `b-${newNodeId}-${i + 1}`,
+            label: b.label,
+            description: b.description,
+            status: 'superposed',
+            probabilityAmplitude: b.probability,
+          }));
 
       // Case 1: 接続元・接続先が共に空白 -> 「未来の揺らぎ」 (Future Fluctuation)
       if (!sourceNodeId && !targetNodeId) {
@@ -304,14 +402,21 @@ export default function App() {
           id: newNodeId,
           title,
           category,
-          state: 'superposition',
-          flavor: 'cosmic-nori',
+          state: isFact ? 'observed' : 'superposition',
+          flavor: 'classic-salt',
+          nodeType: isFact ? 'fact' : 'quantum',
+          isFact,
           position: { x: newX, y: newY },
           parentId: null,
           isFutureFluctuation: true,
           branches,
           createdAt: new Date().toISOString(),
-          tags: tags.length > 0 ? tags : ['未来の揺らぎ', '未接続量子'],
+          tags:
+            tags.length > 0
+              ? tags
+              : isFact
+              ? ['未来の揺らぎ', '事実']
+              : ['未来の揺らぎ', '未接続量子'],
         };
 
         return {
@@ -343,8 +448,10 @@ export default function App() {
             id: newNodeId,
             title,
             category,
-            state: 'superposition',
+            state: isFact ? 'observed' : 'superposition',
             flavor: 'classic-salt',
+            nodeType: isFact ? 'fact' : 'quantum',
+            isFact,
             position: { x: newX, y: newY },
             parentId: sourceNode.id,
             originBranchId: originBranchId || undefined,
@@ -352,7 +459,12 @@ export default function App() {
             isFutureFluctuation: false,
             branches,
             createdAt: new Date().toISOString(),
-            tags: tags.length > 0 ? tags : ['挿入量子', '世界線分岐'],
+            tags:
+              tags.length > 0
+                ? tags
+                : isFact
+                ? ['事実', '世界線挿入']
+                : ['挿入量子', '世界線分岐'],
           };
 
           // targetNode およびその子孫ノードを X 方向へシフト (+440)
@@ -417,15 +529,17 @@ export default function App() {
           id: newNodeId,
           title,
           category,
-          state: 'superposition',
+          state: isFact ? 'observed' : 'superposition',
           flavor: 'classic-salt',
+          nodeType: isFact ? 'fact' : 'quantum',
+          isFact,
           position: { x: newX, y: newY },
           parentId: sourceNode ? sourceNode.id : null,
           originBranchId: originBranchId || undefined,
           isFutureFluctuation: false,
           branches,
           createdAt: new Date().toISOString(),
-          tags: tags.length > 0 ? tags : ['新規決断'],
+          tags: tags.length > 0 ? tags : isFact ? ['事実', '確定記録'] : ['新規決断'],
         };
 
         return {
@@ -444,14 +558,16 @@ export default function App() {
           id: newNodeId,
           title,
           category,
-          state: 'superposition',
+          state: isFact ? 'observed' : 'superposition',
           flavor: 'classic-salt',
+          nodeType: isFact ? 'fact' : 'quantum',
+          isFact,
           position: { x: newX, y: newY },
           parentId: null,
           isFutureFluctuation: false,
           branches,
           createdAt: new Date().toISOString(),
-          tags: tags.length > 0 ? tags : ['新規根量子'],
+          tags: tags.length > 0 ? tags : isFact ? ['事実', '始点確定'] : ['新規根量子'],
         };
 
         const descendantIds = new Set<string>();
@@ -700,16 +816,41 @@ export default function App() {
                       setSelectedBranchId(null);
                     }}
                     className={`shrink-0 px-3 py-2 rounded-xl border cursor-pointer transition flex items-center gap-2.5 ${
-                      selectedNodeId === fn.id
+                      fn.isFact
+                        ? selectedNodeId === fn.id
+                          ? 'bg-emerald-950/80 border-emerald-400 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)] border-dashed'
+                          : 'bg-slate-900/80 border-emerald-500/70 hover:border-emerald-400 text-emerald-100 hover:bg-slate-800/80 border-dashed'
+                        : selectedNodeId === fn.id
                         ? 'bg-purple-950/80 border-purple-400 text-white shadow-[0_0_15px_rgba(192,132,252,0.4)]'
                         : 'bg-slate-900/80 border-slate-700/80 hover:border-purple-500/60 text-slate-200 hover:bg-slate-800/80'
                     }`}
                   >
-                    <div className="w-2.5 h-2.5 rounded-full bg-purple-400 animate-pulse shadow-[0_0_6px_#c084fc]" />
+                    <div
+                      className={`w-2.5 h-2.5 rounded-full ${
+                        fn.isFact
+                          ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]'
+                          : 'bg-purple-400 shadow-[0_0_6px_#c084fc]'
+                      }`}
+                    />
                     <div className="max-w-[120px] sm:max-w-[150px] truncate">
-                      <div className="text-xs font-bold truncate">{fn.title}</div>
-                      <div className="text-[9.5px] text-purple-300/80 font-mono">
-                        {fn.branches.length}選択肢 • {fn.state === 'observed' ? '確定' : '重ね合わせ'}
+                      <div className="text-xs font-bold truncate flex items-center gap-1">
+                        {fn.isFact && (
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-600 font-mono">
+                            FACT
+                          </span>
+                        )}
+                        <span>{fn.title}</span>
+                      </div>
+                      <div
+                        className={`text-[9.5px] font-mono ${
+                          fn.isFact ? 'text-emerald-400/80' : 'text-purple-300/80'
+                        }`}
+                      >
+                        {fn.isFact
+                          ? '事実（揺らぎなし）'
+                          : `${fn.branches.length}揺らぎ • ${
+                              fn.state === 'observed' ? '確定' : '重ね合わせ'
+                            }`}
                       </div>
                     </div>
                     <button
@@ -719,12 +860,17 @@ export default function App() {
                         // この未来の揺らぎノードを接続先として、既存の世界線ノードに接続
                         setSuperpositionModalConfig({
                           isOpen: true,
-                          sourceNodeId: worldLine.nodes.find((n) => !n.isFutureFluctuation)?.id || null,
+                          sourceNodeId:
+                            worldLine.nodes.find((n) => !n.isFutureFluctuation)?.id || null,
                           targetNodeId: fn.id,
                           originBranchId: null,
                         });
                       }}
-                      className="text-[9.5px] px-2 py-1 rounded-lg bg-purple-900/70 hover:bg-purple-800 text-purple-200 border border-purple-600/60 shrink-0 ml-1 font-medium transition"
+                      className={`text-[9.5px] px-2 py-1 rounded-lg shrink-0 ml-1 font-medium transition border ${
+                        fn.isFact
+                          ? 'bg-emerald-900/70 hover:bg-emerald-800 text-emerald-200 border-emerald-600/60'
+                          : 'bg-purple-900/70 hover:bg-purple-800 text-purple-200 border-purple-600/60'
+                      }`}
                       title="世界線へ接続"
                     >
                       接続
@@ -785,6 +931,8 @@ export default function App() {
           onSaveCounterfactualInsight={handleSaveCounterfactualInsight}
           onAddBranchToNode={handleAddBranchToNode}
           onOpenInsertRetroactive={handleOpenInsertRetroactive}
+          onRevertToSuperposition={handleRevertToSuperposition}
+          onDeleteNode={handleDeleteNode}
         />
       </main>
 

@@ -328,14 +328,31 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
       const worldX = (screenX - currentCam.x) / currentCam.zoom;
       const worldY = (screenY - currentCam.y) / currentCam.zoom;
 
-      // 1. ノード判定 (タッチ時は半径を広げてタップしやすくする)
-      const nodeTolerance = isTouch ? 50 : 38;
+      // 1. ノード判定 (事実ボックスまたは量子オーブ)
       for (const node of nodes) {
-        const dx = worldX - node.position.x;
-        const dy = worldY - node.position.y;
-        if (Math.hypot(dx, dy) <= nodeTolerance) {
-          onSelectNode(node);
-          return true;
+        if (node.isFact) {
+          const cardW = 164;
+          const cardH = 56;
+          const boxX = node.position.x - cardW / 2;
+          const boxY = node.position.y - cardH / 2;
+          const margin = isTouch ? 12 : 6;
+          if (
+            worldX >= boxX - margin &&
+            worldX <= boxX + cardW + margin &&
+            worldY >= boxY - margin &&
+            worldY <= boxY + cardH + margin
+          ) {
+            onSelectNode(node);
+            return true;
+          }
+        } else {
+          const nodeTolerance = isTouch ? 50 : 38;
+          const dx = worldX - node.position.x;
+          const dy = worldY - node.position.y;
+          if (Math.hypot(dx, dy) <= nodeTolerance) {
+            onSelectNode(node);
+            return true;
+          }
         }
       }
 
@@ -750,49 +767,130 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
   };
 
   // -------------------------------------------------------------------
-  // 【偏光量子オーブ（Polarized Quantum Orb）の洗練レンダリング】
-  // 1. 二つの楕円の回転で偏光揺らぎを再現
-  // 2. 中心にある量子の縁を排除し、脈打つ単一の円のみを配置
+  // ノードごとの固定ランダム表示角度算出（アニメーションなし・固定角度）
+  // -------------------------------------------------------------------
+  const getNodeFixedAngle = (node: OnigiriNode): number => {
+    if (node.fixedAngle !== undefined) return node.fixedAngle;
+    let hash = 0;
+    for (let i = 0; i < node.id.length; i++) {
+      hash = (hash << 5) - hash + node.id.charCodeAt(i);
+      hash |= 0;
+    }
+    return (Math.abs(hash) % 360) * (Math.PI / 180);
+  };
+
+  // -------------------------------------------------------------------
+  // 【事実 (Fact) ノードの描画】
+  // 揺らぎ（選択肢）ボックスと同じ形状のネオングリーンバージョン
+  // 未来の揺らぎエリアにある場合は点線、世界線上では実線
+  // -------------------------------------------------------------------
+  const drawFactBox = (
+    ctx: CanvasRenderingContext2D,
+    node: OnigiriNode,
+    isSelected: boolean
+  ) => {
+    const cardW = 164;
+    const cardH = 56;
+    const boxX = node.position.x - cardW / 2;
+    const boxY = node.position.y - cardH / 2;
+    const isDashed = !!node.isFutureFluctuation; // 未来の揺らぎエリアにある場合は点線！
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(boxX, boxY, cardW, cardH, 8);
+
+    // 背景: ネオングリーンダークスレート
+    ctx.fillStyle = isSelected ? 'rgba(6, 78, 59, 0.95)' : 'rgba(4, 47, 46, 0.9)';
+    ctx.fill();
+
+    // 枠線: ネオングリーン
+    ctx.strokeStyle = isSelected ? '#34d399' : '#10b981';
+    ctx.lineWidth = isSelected ? 2.2 : 1.5;
+    ctx.shadowColor = '#10b981';
+    ctx.shadowBlur = isSelected ? 16 : 8;
+
+    if (isDashed) {
+      ctx.setLineDash([5, 4]); // 未来の揺らぎエリアにある場合は点線！
+    } else {
+      ctx.setLineDash([]); // 世界線上にある場合は実線！
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.setLineDash([]);
+
+    // 1行目: [ FACT ] バッジ
+    const badgeX = boxX + 8;
+    const badgeY = boxY + 7;
+    const badgeW = 44;
+    const badgeH = 15;
+    ctx.beginPath();
+    ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 4);
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.25)';
+    ctx.fill();
+    ctx.strokeStyle = '#34d399';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = '#6ee7b7';
+    ctx.font = 'bold 8.5px "Space Grotesk", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('FACT', badgeX + badgeW / 2, badgeY + badgeH / 2);
+
+    // カテゴリ表示
+    ctx.fillStyle = '#6ee7b7';
+    ctx.font = 'bold 8.5px "Space Grotesk", sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`[${node.category.toUpperCase()}]`, boxX + cardW - 8, badgeY + badgeH / 2);
+
+    // 2行目: 事実のタイトル
+    ctx.font = '11px "Zen Kaku Gothic New", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ecfdf5';
+
+    const titleText = node.title.length > 13 ? node.title.slice(0, 12) + '…' : node.title;
+    ctx.fillText(titleText, boxX + 9, boxY + 38);
+
+    ctx.restore();
+  };
+
+  // -------------------------------------------------------------------
+  // 【偏光量子オーブ（Polarized Quantum Orb）の静止レンダリング】
+  // - アニメーション完全撤廃（動く光子・粒子の削除）
+  // - 楕円の軸が60度の角度で交わる状態で固定
+  // - 二つの楕円の表示角度は量子ごとにランダムに固定変異
   // -------------------------------------------------------------------
   const drawPolarizedQuantumOrb = (
     ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
+    node: OnigiriNode,
     radius: number,
-    flavor: OnigiriFlavor,
-    state: string,
     isSelected: boolean,
-    time: number,
     quantumMilestoneText?: string
   ) => {
-    const config = ORB_SPECTRUM_CONFIG[flavor] || ORB_SPECTRUM_CONFIG['classic-salt'];
-    const isSuperposed = state === 'superposition';
+    const config = ORB_SPECTRUM_CONFIG[node.flavor] || ORB_SPECTRUM_CONFIG['classic-salt'];
+    const isSuperposed = node.state === 'superposition';
+    const baseAngle = getNodeFixedAngle(node);
 
     ctx.save();
-    ctx.translate(x, y);
+    ctx.translate(node.position.x, node.position.y);
 
-    // 未確定（重ね合わせ）時の量子波動エフェクト（波動関数のゆらめき）
+    // 未確定（重ね合わせ）時の量子静止波動ハロー（アニメーションなし）
     if (isSuperposed) {
-      const floatY = Math.sin(time * 2.8) * 3;
-      ctx.translate(0, floatY);
-
-      const pulse = Math.sin(time * 3.5) * 4;
-      const waveAlpha = 0.3 + Math.sin(time * 2.4) * 0.15;
-
-      // 外側の繊細な重ね合わせハロー
-      const haloGrad = ctx.createRadialGradient(0, 0, 4, 0, 0, radius * 1.6 + pulse);
-      haloGrad.addColorStop(0, 'rgba(168, 85, 247, 0.25)');
-      haloGrad.addColorStop(0.7, 'rgba(236, 72, 153, 0.12)');
+      const haloGrad = ctx.createRadialGradient(0, 0, 4, 0, 0, radius * 1.55);
+      haloGrad.addColorStop(0, 'rgba(168, 85, 247, 0.22)');
+      haloGrad.addColorStop(0.7, 'rgba(236, 72, 153, 0.1)');
       haloGrad.addColorStop(1, 'rgba(168, 85, 247, 0)');
       ctx.fillStyle = haloGrad;
       ctx.beginPath();
-      ctx.arc(0, 0, radius * 1.6 + pulse, 0, Math.PI * 2);
+      ctx.arc(0, 0, radius * 1.55, 0, Math.PI * 2);
       ctx.fill();
 
-      // 確率干渉の点線リング
+      // 確率干渉の静止点線リング（動かない）
       ctx.beginPath();
-      ctx.arc(0, 0, radius * 1.25 + pulse * 0.5, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(192, 132, 252, ${waveAlpha})`;
+      ctx.arc(0, 0, radius * 1.25, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(192, 132, 252, 0.4)';
       ctx.lineWidth = 1.2;
       ctx.setLineDash([4, 4]);
       ctx.stroke();
@@ -812,19 +910,17 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
     }
 
     // ----------------------------------------------------
-    // 1. 偏光軌道楕円 1（第1偏光成分：歳差回転 - 2/3スケール）
+    // 1. 偏光軌道楕円 1（固定角度 baseAngle）
     // ----------------------------------------------------
     ctx.save();
-    const ringAngle1 = time * 0.75;
-    ctx.rotate(ringAngle1);
+    ctx.rotate(baseAngle);
 
-    const ellipse1Rx = radius * 1.0; // 1.5 * (2/3) = 1.0
-    const ellipse1Ry = radius * (1 / 3); // 0.5 * (2/3) = 1/3
+    const ellipse1Rx = radius * 1.0;
+    const ellipse1Ry = radius * (1 / 3);
 
     ctx.beginPath();
     ctx.ellipse(0, 0, ellipse1Rx, ellipse1Ry, 0, 0, Math.PI * 2);
 
-    // 偏光グラデーション（波長の光彩）
     const prismGrad1 = ctx.createLinearGradient(-ellipse1Rx, -ellipse1Ry, ellipse1Rx, ellipse1Ry);
     if (isSuperposed) {
       prismGrad1.addColorStop(0, 'rgba(192, 132, 252, 0.85)');
@@ -838,30 +934,18 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
     ctx.strokeStyle = prismGrad1;
     ctx.lineWidth = isSelected ? 2.0 : 1.5;
     ctx.shadowColor = config.coreColor;
-    ctx.shadowBlur = 10;
+    ctx.shadowBlur = 8;
     ctx.stroke();
-
-    // 楕円上の微小な光子粒子（光のビーズ）
-    const beadProgress1 = (time * 1.2) % (Math.PI * 2);
-    const beadX1 = Math.cos(beadProgress1) * ellipse1Rx;
-    const beadY1 = Math.sin(beadProgress1) * ellipse1Ry;
-    ctx.beginPath();
-    ctx.arc(beadX1, beadY1, 1.8, 0, Math.PI * 2);
-    ctx.fillStyle = '#ffffff';
-    ctx.shadowColor = '#ffffff';
-    ctx.shadowBlur = 6;
-    ctx.fill();
     ctx.restore();
 
     // ----------------------------------------------------
-    // 2. 偏光軌道楕円 2（第2偏光成分：交差回転 - 2/3スケール）
+    // 2. 偏光軌道楕円 2（60度の角度で固定交差 baseAngle + Math.PI / 3）
     // ----------------------------------------------------
     ctx.save();
-    const ringAngle2 = -time * 0.6 + Math.PI / 3;
-    ctx.rotate(ringAngle2);
+    ctx.rotate(baseAngle + Math.PI / 3); // 60度の固定交差角
 
-    const ellipse2Rx = radius * 0.9; // 1.35 * (2/3) = 0.9
-    const ellipse2Ry = radius * 0.28; // 0.42 * (2/3) = 0.28
+    const ellipse2Rx = radius * 0.9;
+    const ellipse2Ry = radius * 0.28;
 
     ctx.beginPath();
     ctx.ellipse(0, 0, ellipse2Rx, ellipse2Ry, 0, 0, Math.PI * 2);
@@ -879,25 +963,13 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
     ctx.strokeStyle = prismGrad2;
     ctx.lineWidth = isSelected ? 1.8 : 1.3;
     ctx.stroke();
-
-    // サブ楕円の反対方向光子
-    const beadProgress2 = (-time * 1.3) % (Math.PI * 2);
-    const beadX2 = Math.cos(beadProgress2) * ellipse2Rx;
-    const beadY2 = Math.sin(beadProgress2) * ellipse2Ry;
-    ctx.beginPath();
-    ctx.arc(beadX2, beadY2, 1.6, 0, Math.PI * 2);
-    ctx.fillStyle = '#ffffff';
-    ctx.shadowColor = '#ffffff';
-    ctx.shadowBlur = 6;
-    ctx.fill();
     ctx.restore();
 
     // ----------------------------------------------------
-    // 3. 中心に脈打つ単一の円（派手な縁を完全に廃し、シンプルに脈動する1つの円）
+    // 3. 中心に固定された単一の円（脈動アニメーションなし）
     // ----------------------------------------------------
     ctx.save();
-    const pulse = Math.sin(time * 3.8) * 1.8;
-    const coreR = Math.max(7.5 + pulse, 3.5);
+    const coreR = 7.5; // 固定サイズ
 
     const coreGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR);
     coreGrad.addColorStop(0, '#ffffff');
@@ -909,7 +981,7 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
     ctx.arc(0, 0, coreR, 0, Math.PI * 2);
     ctx.fillStyle = coreGrad;
     ctx.shadowColor = isSuperposed ? '#c084fc' : config.coreColor;
-    ctx.shadowBlur = isSelected ? 16 : 10;
+    ctx.shadowBlur = isSelected ? 14 : 8;
     ctx.fill();
     ctx.restore();
 
@@ -923,10 +995,7 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
       ctx.fill();
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 1.4;
-      ctx.shadowColor = '#38bdf8';
-      ctx.shadowBlur = 8;
       ctx.stroke();
-      ctx.shadowBlur = 0;
 
       ctx.fillStyle = '#38bdf8';
       ctx.font = 'bold 9.5px "JetBrains Mono", monospace';
@@ -968,7 +1037,7 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
       ctx.scale(dpr, dpr);
       ctx.clearRect(0, 0, parentW, parentH);
 
-      // 1. 深宇宙・多層ネビュラ背景
+      // 1. 深宇宙・多層ネビュラ背景（静止描画）
       const baseGrad = ctx.createLinearGradient(0, 0, parentW, parentH);
       baseGrad.addColorStop(0, '#060814');
       baseGrad.addColorStop(0.5, '#03050c');
@@ -977,8 +1046,8 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
       ctx.fillRect(0, 0, parentW, parentH);
 
       const neb1 = ctx.createRadialGradient(
-        parentW * 0.25 + Math.sin(time * 0.2) * 50,
-        parentH * 0.35 + Math.cos(time * 0.2) * 30,
+        parentW * 0.25,
+        parentH * 0.35,
         40,
         parentW * 0.25,
         parentH * 0.35,
@@ -991,8 +1060,8 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
       ctx.fillRect(0, 0, parentW, parentH);
 
       const neb2 = ctx.createRadialGradient(
-        parentW * 0.75 + Math.cos(time * 0.25) * 60,
-        parentH * 0.65 + Math.sin(time * 0.25) * 40,
+        parentW * 0.75,
+        parentH * 0.65,
         60,
         parentW * 0.75,
         parentH * 0.65,
@@ -1031,10 +1100,9 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
         ctx.stroke();
       }
 
-      // キラキラ星屑＆十字光条
+      // 静止星屑＆十字光条（アニメーションなし）
       for (const star of starsRef.current) {
-        const twinkle = Math.sin(time * star.speed * 90 + star.x) * 0.45 + 0.55;
-        const currentAlpha = star.baseAlpha * twinkle;
+        const currentAlpha = star.baseAlpha * 0.85;
 
         if (star.isGlitter) {
           drawSparkleCross(ctx, star.x, star.y, star.size, currentAlpha, star.color);
@@ -1048,7 +1116,7 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
         }
       }
 
-      // 1.5. 未来の揺らぎ（未接続量子）エリアの描画
+      // 1.5. 未来の揺らぎ（未接続量子/事実）エリアの描画
       const futureNodes = nodes.filter((n) => n.isFutureFluctuation);
       if (futureNodes.length > 0) {
         ctx.save();
@@ -1070,94 +1138,80 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
         ctx.fillStyle = 'rgba(216, 180, 254, 0.85)';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-        ctx.fillText('✦ 未来の揺らぎ（未接続の浮遊量子プール）', minX + 16, areaY + 12);
+        ctx.fillText('✦ 未来の揺らぎ（未接続の浮遊量子・事実プール）', minX + 16, areaY + 12);
         ctx.restore();
       }
 
-      // 2. 世界線（エッジ：親ノードから子ノードへの接続）
-      // - 親が observed の場合：
-      //   親の DECIDED 枠から子ノードへの接続線を描画。
-      //   * 子が superposition（未確定）：点線（破線 purple/cyan）で接続
-      //   * 子が observed（確定）：実線（ネオンシアン ＋ 光子アニメーション）で接続
-      // - 親が superposition の場合（過去世界線に挿入された未確定量子）：
-      //   親の【すべての未確定選択肢枠】から子ノードへ点線（破線）を収束描画
-      //   * その後親が観測・決定されると、選ばれなかった枝の点線は消滅し、選ばれた枝のみが実線に変化する！
+      // 2. 世界線（エッジ：親ノードから子ノードへの接続、量子・事実両対応、光子アニメーションなし）
       for (const node of nodes) {
         if (!node.parentId) continue;
         const parent = nodeMap.current.get(node.parentId);
         if (!parent) continue;
 
         const cardW = 164;
-        const isChildSuperposed = node.state === 'superposition';
+        const isChildSuperposed = node.state === 'superposition' && !node.isFact;
+        const isParentSuperposed = parent.state === 'superposition' && !parent.isFact;
 
-        if (parent.state === 'superposition') {
-          // 親が重ね合わせ状態の場合：すべての枝から子ノードへ点線を描画
+        // 始点リスト (startPoints)
+        const startPoints: { x: number; y: number }[] = [];
+
+        if (parent.isFact) {
+          // 事実ノードからは右端中央から接続が出る
+          startPoints.push({ x: parent.position.x + cardW / 2, y: parent.position.y });
+        } else if (isParentSuperposed) {
+          // 親が重ね合わせ状態の場合：すべての枝から出る
           const numBranches = parent.branches.length;
-          for (let k = 0; k < numBranches; k++) {
-            const bPos = getBranchLayout(parent.position.x, parent.position.y, k, numBranches);
-            const cardRight = bPos.x + cardW;
-
-            ctx.save();
-            ctx.beginPath();
-            drawBendingPath(ctx, cardRight, bPos.y, node.position.x, node.position.y);
-            ctx.strokeStyle = 'rgba(192, 132, 252, 0.75)';
-            ctx.lineWidth = 2.2;
-            ctx.setLineDash([6, 5]);
-            ctx.shadowColor = '#c084fc';
-            ctx.shadowBlur = 8;
-            ctx.stroke();
-            ctx.restore();
+          if (numBranches === 0) {
+            startPoints.push({ x: parent.position.x, y: parent.position.y });
+          } else {
+            for (let k = 0; k < numBranches; k++) {
+              const bPos = getBranchLayout(parent.position.x, parent.position.y, k, numBranches);
+              startPoints.push({ x: bPos.x + cardW, y: bPos.y });
+            }
           }
         } else {
-          // 親が確定（observed）状態の場合：採択された DECIDED 枝から子ノードへ接続
+          // 親が確定状態の場合：採択された DECIDED 枝から出る
           const numBranches = parent.branches.length;
           let actualizedIdx = parent.branches.findIndex((b) => b.id === parent.actualizedBranchId);
           if (actualizedIdx === -1) actualizedIdx = 0;
-          const branchPos = getBranchLayout(parent.position.x, parent.position.y, actualizedIdx, numBranches);
-          const cardX = branchPos.x;
-          const cardRight = cardX + cardW;
+          if (numBranches > 0) {
+            const branchPos = getBranchLayout(parent.position.x, parent.position.y, actualizedIdx, numBranches);
+            startPoints.push({ x: branchPos.x + cardW, y: branchPos.y });
+          } else {
+            startPoints.push({ x: parent.position.x, y: parent.position.y });
+          }
+        }
 
+        // 終点 (endX, endY)
+        const endX = node.isFact ? node.position.x - cardW / 2 : node.position.x;
+        const endY = node.position.y;
+
+        for (const sp of startPoints) {
           ctx.save();
           ctx.beginPath();
-          drawBendingPath(ctx, cardRight, branchPos.y, node.position.x, node.position.y);
+          drawBendingPath(ctx, sp.x, sp.y, endX, endY);
 
-          if (isChildSuperposed) {
-            // 子ノードが重ね合わせ（未確定）の場合：点線で接続
-            ctx.strokeStyle = 'rgba(192, 132, 252, 0.85)';
-            ctx.lineWidth = 2.4;
+          if (isParentSuperposed || isChildSuperposed) {
+            // 未確定の点線（アニメーションなし・静止した点線）
+            ctx.strokeStyle = 'rgba(192, 132, 252, 0.8)';
+            ctx.lineWidth = 2.2;
             ctx.setLineDash([6, 5]);
             ctx.shadowColor = '#c084fc';
-            ctx.shadowBlur = 10;
-            ctx.stroke();
-          } else {
-            // 親も子も確定（observed）の場合：主世界線ネオン実線 ＋ 光子アニメーション
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
-            ctx.lineWidth = 9;
-            ctx.shadowColor = '#0284c7';
-            ctx.shadowBlur = 18;
-            ctx.stroke();
-
-            ctx.strokeStyle = '#38bdf8';
-            ctx.lineWidth = 3.5;
             ctx.shadowBlur = 6;
             ctx.stroke();
+          } else {
+            // 確定実線（事実関連はネオングリーン、その他はシアン。動く白い球なし）
+            const isGreenLine = parent.isFact || node.isFact;
+            ctx.strokeStyle = isGreenLine ? 'rgba(16, 185, 129, 0.25)' : 'rgba(56, 189, 248, 0.25)';
+            ctx.lineWidth = 8;
+            ctx.shadowColor = isGreenLine ? '#10b981' : '#0284c7';
+            ctx.shadowBlur = 12;
+            ctx.stroke();
 
-            // 線上を走る量子光子（Photon particle）アニメーション
-            const photonProgress = (time * 0.6 + (parent.position.x % 100) * 0.01) % 1;
-            const pt = getBendingPoint(
-              cardRight,
-              branchPos.y,
-              node.position.x,
-              node.position.y,
-              photonProgress
-            );
-
-            ctx.beginPath();
-            ctx.arc(pt.x, pt.y, 4.5, 0, Math.PI * 2);
-            ctx.fillStyle = '#ffffff';
-            ctx.shadowColor = '#38bdf8';
-            ctx.shadowBlur = 15;
-            ctx.fill();
+            ctx.strokeStyle = isGreenLine ? '#10b981' : '#38bdf8';
+            ctx.lineWidth = 3.2;
+            ctx.shadowBlur = 4;
+            ctx.stroke();
           }
           ctx.restore();
         }
@@ -1165,6 +1219,7 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
 
       // 3. 各量子の選択肢（ブランチ）の描画：一つの枠内に一行目DECIDED/IF、二行目に選択詳細（1行12文字まで）
       for (const node of nodes) {
+        if (node.isFact) continue; // 事実ノードは独自のボックス描画を行うためブランチなし
         const numBranches = node.branches.length;
 
         node.branches.forEach((branch, k) => {
@@ -1178,7 +1233,7 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
           const cardX = branchPos.x;
           const cardY = branchPos.y - cardH / 2;
 
-          // 親ノードからこの枠の左端への屈曲接続線を描画
+          // 親ノードからこの枠の左端への屈曲接続線を描画（アニメーションなし、静止描画）
           ctx.save();
           drawBendingPath(ctx, node.position.x, node.position.y, cardX, branchPos.y);
 
@@ -1195,16 +1250,6 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
             ctx.shadowColor = '#0284c7';
             ctx.shadowBlur = 10;
             ctx.stroke();
-
-            // 光子アニメーション（親ノード中心からDECIDEDカード枠へ）
-            const branchProgress = (time * 0.6 + (node.position.x % 100) * 0.01) % 1;
-            const bPt = getBendingPoint(node.position.x, node.position.y, cardX, branchPos.y, branchProgress);
-            ctx.beginPath();
-            ctx.arc(bPt.x, bPt.y, 4, 0, Math.PI * 2);
-            ctx.fillStyle = '#ffffff';
-            ctx.shadowColor = '#38bdf8';
-            ctx.shadowBlur = 12;
-            ctx.fill();
           } else {
             ctx.strokeStyle = isBranchSelected
               ? 'rgba(192, 132, 252, 0.95)'
@@ -1331,61 +1376,75 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
         });
       }
 
-      // 4. 美麗な「偏光量子オーブ」ノード本体の描画
+      // 4. ノード本体の描画（偏光量子オーブ or 事実ネオングリーンボックス）
       let observedCounter = 0;
       for (const node of nodes) {
         const isSelected = selectedNodeId === node.id;
-        const radius = 28; // 洗練されたコアオーブ半径
+        const radius = 28; // コアオーブ半径
 
-        let milestoneText: string | undefined = undefined;
-        if (node.state === 'observed') {
-          observedCounter++;
-          if (observedCounter % 10 === 0) {
-            milestoneText = `${observedCounter}quantum`;
+        if (node.isFact) {
+          // 事実（FACT）ノードの描画
+          drawFactBox(ctx, node, isSelected);
+
+          if (node.isFutureFluctuation) {
+            ctx.save();
+            ctx.font = 'bold 9.5px "Space Grotesk", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillStyle = '#34d399';
+            ctx.shadowColor = '#10b981';
+            ctx.shadowBlur = 8;
+            ctx.fillText('✦ 未来の揺らぎ（事実）', node.position.x, node.position.y - 34);
+            ctx.restore();
           }
-        }
+        } else {
+          // 量子（QUANTUM）オーブの描画
+          let milestoneText: string | undefined = undefined;
+          if (node.state === 'observed') {
+            observedCounter++;
+            if (observedCounter % 10 === 0) {
+              milestoneText = `${observedCounter}quantum`;
+            }
+          }
 
-        drawPolarizedQuantumOrb(
-          ctx,
-          node.position.x,
-          node.position.y,
-          radius,
-          node.flavor,
-          node.state,
-          isSelected,
-          time,
-          milestoneText
-        );
+          drawPolarizedQuantumOrb(
+            ctx,
+            node,
+            radius,
+            isSelected,
+            milestoneText
+          );
 
-        // 未来の揺らぎノードの頭上バッジ
-        if (node.isFutureFluctuation) {
+          // 未来の揺らぎノードの頭上バッジ
+          if (node.isFutureFluctuation) {
+            ctx.save();
+            ctx.font = 'bold 9.5px "Space Grotesk", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillStyle = '#c084fc';
+            ctx.shadowColor = '#a855f7';
+            ctx.shadowBlur = 8;
+            ctx.fillText('✦ 未来の揺らぎ', node.position.x, node.position.y - 34);
+            ctx.restore();
+          }
+
+          // ノード名ラベル
           ctx.save();
-          ctx.font = 'bold 9.5px "Space Grotesk", sans-serif';
+          ctx.font = 'bold 12.5px "Zen Kaku Gothic New", sans-serif';
           ctx.textAlign = 'center';
-          ctx.textBaseline = 'bottom';
-          ctx.fillStyle = '#c084fc';
-          ctx.shadowColor = '#a855f7';
+          ctx.textBaseline = 'top';
+          ctx.fillStyle = isSelected ? '#38bdf8' : '#f8fafc';
+          ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
           ctx.shadowBlur = 8;
-          ctx.fillText('✦ 未来の揺らぎ', node.position.x, node.position.y - 34);
+          ctx.fillText(node.title, node.position.x, node.position.y + 46);
+
+          // カテゴリバッジ
+          ctx.font = 'bold 10px "Space Grotesk", sans-serif';
+          ctx.fillStyle = '#94a3b8';
+          ctx.fillText(`[${node.category.toUpperCase()}]`, node.position.x, node.position.y + 64);
+
           ctx.restore();
         }
-
-        // ノード名ラベル
-        ctx.save();
-        ctx.font = 'bold 12.5px "Zen Kaku Gothic New", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        ctx.fillStyle = isSelected ? '#38bdf8' : '#f8fafc';
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-        ctx.shadowBlur = 8;
-        ctx.fillText(node.title, node.position.x, node.position.y + 46);
-
-        // カテゴリバッジ
-        ctx.font = 'bold 10px "Space Grotesk", sans-serif';
-        ctx.fillStyle = '#94a3b8';
-        ctx.fillText(`[${node.category.toUpperCase()}]`, node.position.x, node.position.y + 64);
-
-        ctx.restore();
       }
 
       ctx.restore();
