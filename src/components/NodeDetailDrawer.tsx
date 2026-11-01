@@ -5,6 +5,7 @@
  * - 作成済みの量子の編集機能（「揺らぎ状態に戻す」ボタン）：実線から点線に戻し、再確定可能にする
  * - 量子・事実の削除機能：削除すると前後の接続元と接続先が直接再接続される
  * - 「事実 (Fact)」ノードの専用表示
+ * - メインマップ上の「可能性（選択肢）」または「事実」をクリックした際、「ここに未来の揺らぎを事実として接続する」から未来の揺らぎ一覧を表示して接続可能
  */
 
 import React, { useState } from 'react';
@@ -21,12 +22,15 @@ import {
   RotateCcw,
   Trash2,
   FileCheck,
+  ChevronDown,
+  Link2,
 } from 'lucide-react';
 
 interface NodeDetailDrawerProps {
   node: OnigiriNode | null;
   selectedBranch: QuantumBranch | null;
   quantumLog: QuantumLog | null;
+  futureNodes?: OnigiriNode[];
   onClose: () => void;
   onOpenObservation: (node: OnigiriNode) => void;
   onSaveCounterfactualInsight: (
@@ -39,12 +43,24 @@ interface NodeDetailDrawerProps {
   onOpenInsertRetroactive?: (node: OnigiriNode, branch?: QuantumBranch) => void;
   onRevertToSuperposition?: (nodeId: string) => void;
   onDeleteNode?: (nodeId: string) => void;
+  onSelectBranch?: (node: OnigiriNode, branch: QuantumBranch) => void;
+  onConnectFutureNodeHere?: (
+    futureNodeId: string,
+    parentNode: OnigiriNode,
+    branch?: QuantumBranch
+  ) => void;
+  onOpenConnectFutureModal?: (
+    futureNode: OnigiriNode,
+    parentNode?: OnigiriNode,
+    branch?: QuantumBranch
+  ) => void;
 }
 
 export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
   node,
   selectedBranch,
   quantumLog,
+  futureNodes = [],
   onClose,
   onOpenObservation,
   onSaveCounterfactualInsight,
@@ -52,12 +68,16 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
   onOpenInsertRetroactive,
   onRevertToSuperposition,
   onDeleteNode,
+  onSelectBranch,
+  onConnectFutureNodeHere,
+  onOpenConnectFutureModal,
 }) => {
   if (!node) return null;
 
   const isSuperposition = node.state === 'superposition';
   const isCounterfactualBranch = !!selectedBranch && selectedBranch.status === 'counterfactual';
   const isDecidedBranch = !!selectedBranch && selectedBranch.status === 'actualized';
+  const isSuperposedBranch = !!selectedBranch && selectedBranch.status === 'superposed';
 
   // IFの振り返り編集用ステート
   const [regretScore, setRegretScore] = useState<number>(
@@ -72,6 +92,9 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
   const [isAddingBranch, setIsAddingBranch] = useState(false);
   const [newBranchLabel, setNewBranchLabel] = useState('');
   const [newBranchDesc, setNewBranchDesc] = useState('');
+
+  // 「ここに未来の揺らぎを事実として接続する」リストの開閉ステート
+  const [isFutureConnectListOpen, setIsFutureConnectListOpen] = useState(false);
 
   const handleSaveInsight = () => {
     if (!selectedBranch) return;
@@ -115,6 +138,85 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
     setSwipeOffset(0);
   };
 
+  // メインマップに存在する「可能性（選択肢）」または「事実」をクリックした際に表示する
+  // 「ここに未来の揺らぎを事実として接続する」リストセクション
+  const renderConnectFutureSection = (branchForConnection?: QuantumBranch) => {
+    if (node.isFutureFluctuation) return null;
+
+    return (
+      <div className="pt-2 space-y-2">
+        <button
+          type="button"
+          onClick={() => setIsFutureConnectListOpen((prev) => !prev)}
+          className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/70 border border-dashed border-emerald-500/80 text-emerald-200 font-bold text-xs shadow-[0_0_12px_rgba(16,185,129,0.2)] transition"
+        >
+          <div className="flex items-center gap-2">
+            <Link2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span>ここに未来の揺らぎを事実として接続する</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/60 font-mono">
+              {futureNodes.length}件
+            </span>
+          </div>
+          <ChevronDown
+            className={`w-4 h-4 text-emerald-400 transition-transform duration-200 shrink-0 ${
+              isFutureConnectListOpen ? 'rotate-180' : ''
+            }`}
+          />
+        </button>
+
+        {isFutureConnectListOpen && (
+          <div className="bg-slate-950/90 border border-dashed border-emerald-500/70 rounded-xl p-2.5 space-y-2 max-h-56 overflow-y-auto">
+            {futureNodes.length === 0 ? (
+              <p className="text-[11px] text-slate-400 text-center py-3">
+                現在「未来の揺らぎ」エリアに項目はありません。
+              </p>
+            ) : (
+              futureNodes.map((fn) => (
+                <div
+                  key={fn.id}
+                  className="p-2.5 rounded-lg bg-slate-900/90 border border-emerald-900/60 hover:border-emerald-500/70 transition flex items-center justify-between gap-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-bold text-emerald-200 truncate">
+                      {fn.title}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono capitalize">
+                      {fn.category}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onConnectFutureNodeHere?.(fn.id, node, branchForConnection);
+                        setIsFutureConnectListOpen(false);
+                      }}
+                      className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-[10px] transition shadow"
+                      title="そのまま事実としてここに挿入・接続"
+                    >
+                      ここに接続
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenConnectFutureModal?.(fn, node, branchForConnection);
+                        setIsFutureConnectListOpen(false);
+                      }}
+                      className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/40 text-[10px] transition"
+                      title="接続フローを開いて接続先や事実の内容を調整"
+                    >
+                      接続フロー
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div
       style={{
@@ -147,9 +249,9 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
               <span>事実（FACT）</span>
             </div>
           ) : node.isFutureFluctuation ? (
-            <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-purple-300 bg-purple-950/80 px-2 py-0.5 rounded border border-purple-700">
-              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-              <span>未来の揺らぎ（浮遊量子）</span>
+            <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-emerald-300 bg-emerald-950/80 px-2.5 py-0.5 rounded border border-dashed border-emerald-500">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              <span>未来の揺らぎ</span>
             </div>
           ) : isCounterfactualBranch ? (
             <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-rose-400 bg-rose-950/70 px-2 py-0.5 rounded border border-rose-800">
@@ -160,6 +262,11 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
             <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-cyan-400 bg-cyan-950/70 px-2 py-0.5 rounded border border-cyan-800">
               <CheckCircle className="w-3.5 h-3.5" />
               <span>DECIDED（確定世界線）</span>
+            </div>
+          ) : isSuperposedBranch ? (
+            <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-purple-300 bg-purple-950/70 px-2 py-0.5 rounded border border-purple-700">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>可能性（選択肢）</span>
             </div>
           ) : isSuperposition ? (
             <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-purple-400 bg-purple-950/70 px-2 py-0.5 rounded border border-purple-800">
@@ -207,7 +314,7 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
         {/* A. 事実 (Fact) ノードの場合の専用表示 */}
         {/* ------------------------------------------------------------- */}
         {node.isFact ? (
-          <div className="space-y-4">
+          <div className="space-y-3">
             <div className="bg-emerald-950/25 border border-emerald-500/40 p-4 rounded-2xl space-y-2">
               <div className="flex items-center gap-2 text-xs text-emerald-300 font-bold">
                 <FileCheck className="w-4 h-4 text-emerald-400" />
@@ -225,13 +332,15 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
               <Sparkles className="w-4 h-4 text-slate-950" />
               <span>New Quantum（この事実に続く量子・事実を追加）</span>
             </button>
+
+            {renderConnectFutureSection()}
           </div>
         ) : isCounterfactualBranch && selectedBranch ? (
           /* --- B. IF世界線の振り返りモード --- */
-          <div className="space-y-5 bg-rose-950/15 border border-rose-900/30 p-4 rounded-2xl">
+          <div className="space-y-4 bg-rose-950/15 border border-rose-900/30 p-4 rounded-2xl">
             <div>
               <span className="text-[11px] font-mono text-rose-400 uppercase tracking-wider block mb-1">
-                選ばれなかった道
+                選ばれなかった道（可能性）
               </span>
               <h3 className="text-base font-bold text-rose-100">{selectedBranch.label}</h3>
               {selectedBranch.description && (
@@ -291,13 +400,17 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
                 )}
               </div>
             </div>
+
+            <div className="pt-2 border-t border-rose-900/30">
+              {renderConnectFutureSection(selectedBranch)}
+            </div>
           </div>
         ) : isDecidedBranch && selectedBranch ? (
-          /* --- C. 採択された（DECIDED）選択肢の詳細 ＆ 過去量子揺らぎの追加 --- */
+          /* --- C. 採択された（DECIDED）選択肢の詳細 ＆ 量子/未来の揺らぎ接続 --- */
           <div className="space-y-4 bg-cyan-950/20 border border-cyan-800/50 p-4 rounded-2xl">
             <div>
               <span className="text-[11px] font-mono text-cyan-400 uppercase tracking-wider block mb-1">
-                採択された決断
+                採択された決断（可能性）
               </span>
               <h3 className="text-base font-bold text-cyan-100">{selectedBranch.label}</h3>
               {selectedBranch.description && (
@@ -316,6 +429,33 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
               <p className="text-[11px] text-purple-300/80 text-center leading-relaxed">
                 この決断の直後に、新しい量子を接続・配置します。
               </p>
+
+              {renderConnectFutureSection(selectedBranch)}
+            </div>
+          </div>
+        ) : isSuperposedBranch && selectedBranch ? (
+          /* --- C2. 重ね合わせ状態の可能性（選択肢）をクリックした場合 --- */
+          <div className="space-y-4 bg-purple-950/25 border border-purple-800/50 p-4 rounded-2xl">
+            <div>
+              <span className="text-[11px] font-mono text-purple-300 uppercase tracking-wider block mb-1">
+                選択中の可能性（揺らぎ）
+              </span>
+              <h3 className="text-base font-bold text-purple-100">{selectedBranch.label}</h3>
+              {selectedBranch.description && (
+                <p className="text-xs text-purple-200/80 mt-1">{selectedBranch.description}</p>
+              )}
+            </div>
+
+            <div className="pt-3 border-t border-purple-900/50 space-y-2.5">
+              <button
+                onClick={() => onOpenInsertRetroactive?.(node, selectedBranch)}
+                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-[0_0_20px_rgba(168,85,247,0.4)] transition"
+              >
+                <Sparkles className="w-4 h-4 text-purple-200" />
+                <span>New Quantum</span>
+              </button>
+
+              {renderConnectFutureSection(selectedBranch)}
             </div>
           </div>
         ) : isSuperposition ? (
@@ -324,37 +464,63 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
             <div className="bg-purple-950/30 border border-purple-800/40 p-3 rounded-2xl">
               <div className="flex items-center gap-2 text-xs text-purple-300 font-bold">
                 <Sparkles className="w-4 h-4 text-purple-400" />
-                <span>可能性がゆらめいている状態です</span>
+                <span>
+                  {node.isFutureFluctuation
+                    ? '未接続の「未来の揺らぎ」です'
+                    : '可能性がゆらめいている状態です'}
+                </span>
               </div>
             </div>
 
-            <div>
-              <span className="text-xs font-semibold text-slate-300 block mb-2">
-                重なり合っている選択肢:
-              </span>
-              <div className="space-y-2">
-                {node.branches.map((b) => (
-                  <div
-                    key={b.id}
-                    className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs"
-                  >
-                    <div className="font-semibold text-purple-200">{b.label}</div>
-                    {b.description && (
-                      <p className="text-slate-400 mt-1 text-[11px]">{b.description}</p>
-                    )}
+            {node.isFutureFluctuation && (
+              <button
+                type="button"
+                onClick={() => onOpenConnectFutureModal?.(node)}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-bold text-xs shadow-[0_0_15px_rgba(16,185,129,0.3)] transition"
+              >
+                <FileCheck className="w-4 h-4 text-slate-950" />
+                <span>世界線へ接続（事実としてメインマップに配置）</span>
+              </button>
+            )}
+
+            {node.branches.length > 0 ? (
+              <>
+                <div>
+                  <span className="text-xs font-semibold text-slate-300 block mb-2">
+                    重なり合っている選択肢（クリックして選択）:
+                  </span>
+                  <div className="space-y-2">
+                    {node.branches.map((b) => (
+                      <div
+                        key={b.id}
+                        onClick={() => onSelectBranch?.(node, b)}
+                        className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-purple-500/60 cursor-pointer transition text-xs"
+                      >
+                        <div className="font-semibold text-purple-200">{b.label}</div>
+                        {b.description && (
+                          <p className="text-slate-400 mt-1 text-[11px]">{b.description}</p>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
 
-            {/* 未確定状態での「今すぐ観測・決断を確定する」ボタン */}
-            <button
-              onClick={() => onOpenObservation(node)}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold text-sm shadow-[0_0_20px_rgba(56,189,248,0.4)] transition"
-            >
-              <CheckCircle className="w-4 h-4 stroke-[2.5]" />
-              <span>今すぐ観測・決断を確定する</span>
-            </button>
+                {/* 未確定状態での「今すぐ観測・決断を確定する」ボタン */}
+                {!node.isFutureFluctuation && (
+                  <button
+                    onClick={() => onOpenObservation(node)}
+                    className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold text-sm shadow-[0_0_20px_rgba(56,189,248,0.4)] transition"
+                  >
+                    <CheckCircle className="w-4 h-4 stroke-[2.5]" />
+                    <span>今すぐ観測・決断を確定する</span>
+                  </button>
+                )}
+              </>
+            ) : (
+              <div className="text-xs text-emerald-300/80 bg-emerald-950/20 border border-dashed border-emerald-500/40 rounded-xl p-3">
+                接続元・接続先が未設定の「未来の揺らぎ」です。世界線に接続すると「事実」としてメインマップに挿入・配置されます。
+              </div>
+            )}
           </div>
         ) : (
           /* --- E. 確定済みノード（Observed） --- */
@@ -404,11 +570,11 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
                     )}
                     <button
                       type="button"
-                      onClick={() => onOpenInsertRetroactive?.(node, b)}
-                      className="mt-2.5 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-purple-900/50 hover:bg-purple-800/70 border border-purple-700/60 text-[11px] font-semibold text-purple-200 transition"
+                      onClick={() => onSelectBranch?.(node, b)}
+                      className="mt-2.5 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/80 border border-cyan-700/60 text-[11px] font-semibold text-cyan-200 transition"
+                      title="この選択肢（可能性）を選択して量子または未来の揺らぎを接続"
                     >
-                      <Sparkles className="w-3.5 h-3.5 text-purple-300" />
-                      <span>New Quantum</span>
+                      <span>この可能性を選択する（量子・未来の揺らぎの接続へ）</span>
                     </button>
                   </div>
                 ))}
@@ -426,7 +592,8 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
                     .map((b) => (
                       <div
                         key={b.id}
-                        className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 text-xs"
+                        onClick={() => onSelectBranch?.(node, b)}
+                        className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 hover:border-rose-500/50 cursor-pointer transition text-xs"
                       >
                         <div className="font-medium text-slate-300">{b.label}</div>
                         {b.counterfactualInsight?.revisitedNotes && (
@@ -462,7 +629,7 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
         {/* ---------------------------------------------------------------- */}
         {/* 後からでも「他の選択肢を追加」できる共通セクション（事実以外） */}
         {/* ---------------------------------------------------------------- */}
-        {!node.isFact && !selectedBranch && (
+        {!node.isFact && !node.isFutureFluctuation && !selectedBranch && (
           <div className="pt-3 border-t border-slate-800/80">
             {!isAddingBranch ? (
               <button
@@ -473,7 +640,10 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
                 <span>他の選択肢を追加</span>
               </button>
             ) : (
-              <form onSubmit={handleCreateBranch} className="bg-slate-900/80 p-3.5 rounded-xl border border-slate-700 space-y-3">
+              <form
+                onSubmit={handleCreateBranch}
+                className="bg-slate-900/80 p-3.5 rounded-xl border border-slate-700 space-y-3"
+              >
                 <div className="flex items-center justify-between text-xs font-semibold text-slate-200">
                   <span>他の選択肢を追加</span>
                   <button
@@ -527,18 +697,18 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
           <button
             type="button"
             onClick={() => {
-              if (
-                window.confirm(
-                  `「${node.title}」を削除してもよろしいですか？\n削除すると、前後の接続元と接続先が直接つながります。`
-                )
-              ) {
-                onDeleteNode?.(node.id);
-              }
+              onDeleteNode?.(node.id);
             }}
-            className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-rose-950/30 hover:bg-rose-900/50 border border-rose-800/50 text-xs text-rose-300 hover:text-rose-100 transition"
+            className="w-full flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-700/60 text-xs font-bold text-rose-200 hover:text-white transition shadow-sm"
           >
             <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-            <span>{node.isFact ? 'この事実を削除' : 'この量子を削除'}</span>
+            <span>
+              {node.isFact
+                ? 'この事実を削除'
+                : node.isFutureFluctuation
+                ? 'この未来の揺らぎを削除'
+                : 'この量子を削除'}
+            </span>
           </button>
         </div>
       </div>
@@ -546,7 +716,11 @@ export const NodeDetailDrawer: React.FC<NodeDetailDrawerProps> = ({
       {/* フッター */}
       <div className="p-4 border-t border-slate-800/80 bg-slate-900/40 flex justify-between items-center text-xs">
         <span className="text-slate-500 font-mono text-[11px]">
-          {node.isFact ? 'Fact Entity' : 'Polarized Quantum Node'}
+          {node.isFact
+            ? 'Fact Entity'
+            : node.isFutureFluctuation
+            ? 'Future Fluctuation'
+            : 'Polarized Quantum Node'}
         </span>
         <button
           onClick={onClose}

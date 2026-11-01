@@ -21,6 +21,7 @@ interface HeaderProps {
   onOpenNewSuperposition: () => void;
   onOpenEntanglementDemo: () => void;
   onOpenGuide: () => void;
+  showNewQuantum?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -30,6 +31,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenNewSuperposition,
   onOpenEntanglementDemo,
   onOpenGuide,
+  showNewQuantum = true,
 }) => {
   return (
     <header className="h-16 px-4 sm:px-6 border-b border-slate-800 bg-slate-950/85 backdrop-blur-md flex items-center justify-between z-20 shrink-0 select-none">
@@ -97,14 +99,16 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="hidden lg:inline">量子合流</span>
         </button>
 
-        {/* New Quantum ボタン */}
-        <button
-          onClick={onOpenNewSuperposition}
-          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 shadow-[0_0_15px_rgba(56,189,248,0.4)] transition"
-        >
-          <Eye className="w-3.5 h-3.5 stroke-[2.5]" />
-          <span>New Quantum</span>
-        </button>
+        {/* New Quantum ボタン（量子ノード選択時は非表示、ブランチ選択時または未選択時に表示） */}
+        {showNewQuantum && (
+          <button
+            onClick={onOpenNewSuperposition}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 shadow-[0_0_15px_rgba(56,189,248,0.4)] transition"
+          >
+            <Eye className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>New Quantum</span>
+          </button>
+        )}
 
         {/* ガイド */}
         <button

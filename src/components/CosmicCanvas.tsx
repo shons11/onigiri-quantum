@@ -328,8 +328,11 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
       const worldX = (screenX - currentCam.x) / currentCam.zoom;
       const worldY = (screenY - currentCam.y) / currentCam.zoom;
 
+      // メインマップ上のノードのみ判定（未来の揺らぎは上部固定UIで管理）
+      const mainMapNodes = nodes.filter((n) => !n.isFutureFluctuation);
+
       // 1. ノード判定 (事実ボックスまたは量子オーブ)
-      for (const node of nodes) {
+      for (const node of mainMapNodes) {
         if (node.isFact) {
           const cardW = 164;
           const cardH = 56;
@@ -358,7 +361,7 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
 
       // 2. ブランチ（選択肢枠）判定 (タッチ時はマージンを広げる)
       const cardMargin = isTouch ? 10 : 6;
-      for (const node of nodes) {
+      for (const node of mainMapNodes) {
         const numBranches = node.branches.length;
         for (let k = 0; k < numBranches; k++) {
           const branch = node.branches[k];
@@ -803,20 +806,14 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
     ctx.fillStyle = isSelected ? 'rgba(6, 78, 59, 0.95)' : 'rgba(4, 47, 46, 0.9)';
     ctx.fill();
 
-    // 枠線: ネオングリーン
+    // 枠線: ネオングリーン（メインマップに接続された事実は常に実線）
     ctx.strokeStyle = isSelected ? '#34d399' : '#10b981';
-    ctx.lineWidth = isSelected ? 2.2 : 1.5;
+    ctx.lineWidth = isSelected ? 2.2 : 1.6;
     ctx.shadowColor = '#10b981';
     ctx.shadowBlur = isSelected ? 16 : 8;
-
-    if (isDashed) {
-      ctx.setLineDash([5, 4]); // 未来の揺らぎエリアにある場合は点線！
-    } else {
-      ctx.setLineDash([]); // 世界線上にある場合は実線！
-    }
+    ctx.setLineDash([]); // メインマップ上の「事実」は実線
     ctx.stroke();
     ctx.shadowBlur = 0;
-    ctx.setLineDash([]);
 
     // 1行目: [ FACT ] バッジ
     const badgeX = boxX + 8;
@@ -1116,34 +1113,11 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
         }
       }
 
-      // 1.5. 未来の揺らぎ（未接続量子/事実）エリアの描画
-      const futureNodes = nodes.filter((n) => n.isFutureFluctuation);
-      if (futureNodes.length > 0) {
-        ctx.save();
-        const minX = Math.min(...futureNodes.map((n) => n.position.x)) - 60;
-        const maxX = Math.max(...futureNodes.map((n) => n.position.x + 360)) + 60;
-        const areaY = Math.min(...futureNodes.map((n) => n.position.y)) - 65;
-        const areaH = 220;
-
-        ctx.beginPath();
-        ctx.roundRect(minX, areaY, Math.max(maxX - minX, 480), areaH, 18);
-        ctx.fillStyle = 'rgba(88, 28, 135, 0.12)';
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(168, 85, 247, 0.35)';
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([6, 6]);
-        ctx.stroke();
-
-        ctx.font = 'bold 11px "Space Grotesk", sans-serif';
-        ctx.fillStyle = 'rgba(216, 180, 254, 0.85)';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        ctx.fillText('✦ 未来の揺らぎ（未接続の浮遊量子・事実プール）', minX + 16, areaY + 12);
-        ctx.restore();
-      }
+      // メインマップ上のノードのみ描画（未来の揺らぎはスワイプ・移動に影響されない上部固定UIで表示）
+      const mainMapNodes = nodes.filter((n) => !n.isFutureFluctuation);
 
       // 2. 世界線（エッジ：親ノードから子ノードへの接続、量子・事実両対応、光子アニメーションなし）
-      for (const node of nodes) {
+      for (const node of mainMapNodes) {
         if (!node.parentId) continue;
         const parent = nodeMap.current.get(node.parentId);
         if (!parent) continue;
@@ -1170,9 +1144,10 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
             }
           }
         } else {
-          // 親が確定状態の場合：採択された DECIDED 枝から出る
+          // 親が確定状態の場合：指定された originBranchId または採択された DECIDED 枝から出る
           const numBranches = parent.branches.length;
-          let actualizedIdx = parent.branches.findIndex((b) => b.id === parent.actualizedBranchId);
+          const targetBranchId = node.originBranchId || parent.actualizedBranchId;
+          let actualizedIdx = parent.branches.findIndex((b) => b.id === targetBranchId);
           if (actualizedIdx === -1) actualizedIdx = 0;
           if (numBranches > 0) {
             const branchPos = getBranchLayout(parent.position.x, parent.position.y, actualizedIdx, numBranches);
@@ -1218,7 +1193,7 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
       }
 
       // 3. 各量子の選択肢（ブランチ）の描画：一つの枠内に一行目DECIDED/IF、二行目に選択詳細（1行12文字まで）
-      for (const node of nodes) {
+      for (const node of mainMapNodes) {
         if (node.isFact) continue; // 事実ノードは独自のボックス描画を行うためブランチなし
         const numBranches = node.branches.length;
 
@@ -1378,25 +1353,13 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
 
       // 4. ノード本体の描画（偏光量子オーブ or 事実ネオングリーンボックス）
       let observedCounter = 0;
-      for (const node of nodes) {
+      for (const node of mainMapNodes) {
         const isSelected = selectedNodeId === node.id;
         const radius = 28; // コアオーブ半径
 
         if (node.isFact) {
-          // 事実（FACT）ノードの描画
+          // 事実（FACT）ノードの描画（実線のネオングリーンボックス）
           drawFactBox(ctx, node, isSelected);
-
-          if (node.isFutureFluctuation) {
-            ctx.save();
-            ctx.font = 'bold 9.5px "Space Grotesk", sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
-            ctx.fillStyle = '#34d399';
-            ctx.shadowColor = '#10b981';
-            ctx.shadowBlur = 8;
-            ctx.fillText('✦ 未来の揺らぎ（事実）', node.position.x, node.position.y - 34);
-            ctx.restore();
-          }
         } else {
           // 量子（QUANTUM）オーブの描画
           let milestoneText: string | undefined = undefined;
@@ -1414,19 +1377,6 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
             isSelected,
             milestoneText
           );
-
-          // 未来の揺らぎノードの頭上バッジ
-          if (node.isFutureFluctuation) {
-            ctx.save();
-            ctx.font = 'bold 9.5px "Space Grotesk", sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
-            ctx.fillStyle = '#c084fc';
-            ctx.shadowColor = '#a855f7';
-            ctx.shadowBlur = 8;
-            ctx.fillText('✦ 未来の揺らぎ', node.position.x, node.position.y - 34);
-            ctx.restore();
-          }
 
           // ノード名ラベル
           ctx.save();
@@ -1475,13 +1425,7 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
         className="w-full h-full cursor-grab active:cursor-grabbing block touch-none"
       />
 
-      {/* スマホ・タブレット向けタッチ操作ヒントバッジ */}
-      <div className="absolute top-4 left-4 flex md:hidden items-center gap-1.5 px-3 py-1.5 bg-slate-950/85 backdrop-blur-md border border-slate-800 rounded-full text-[11px] font-mono text-cyan-300 pointer-events-none z-10 shadow-lg animate-in fade-in duration-300">
-        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-        <span>1本指スワイプ: 移動</span>
-        <span className="text-slate-600">|</span>
-        <span>2本指: 拡大縮小</span>
-      </div>
+
 
       {/* 画面内クイック操作コントローラー（スマホ・タブレットのタッチに最適化） */}
       <div className="absolute bottom-4 left-4 sm:bottom-6 sm:left-6 flex items-center gap-1 sm:gap-2 bg-slate-900/90 backdrop-blur-md px-3 py-2 rounded-2xl border border-slate-700/60 shadow-[0_0_25px_rgba(0,0,0,0.7)] text-xs text-slate-300 z-10 touch-auto">
