@@ -54,6 +54,7 @@ interface NewSuperpositionModalProps {
     tags: string[],
     connections: ConnectionConfig
   ) => void;
+  onDeleteNode?: (nodeId: string) => void;
 }
 
 export const NewSuperpositionModal: React.FC<NewSuperpositionModalProps> = ({
@@ -65,6 +66,7 @@ export const NewSuperpositionModal: React.FC<NewSuperpositionModalProps> = ({
   onClose,
   onCreateSuperposition,
   onConnectFutureNodeAsFact,
+  onDeleteNode,
 }) => {
   const isConnectingFutureMode = Boolean(connectingFutureNode);
 
@@ -97,7 +99,10 @@ export const NewSuperpositionModal: React.FC<NewSuperpositionModalProps> = ({
   const sourceNode = mainMapNodes.find((n) => n.id === sourceNodeId) || null;
   const targetNode = mainMapNodes.find((n) => n.id === targetNodeId) || null;
 
-  const hasConnection = Boolean(sourceNodeId || targetNodeId);
+  const activeSourceId = sourceNode ? sourceNode.id : null;
+  const activeTargetId = targetNode ? targetNode.id : null;
+
+  const hasConnection = Boolean(activeSourceId || activeTargetId);
   const hasBranches = !isConnectingFutureMode && branches.length > 0;
 
   // モード判定:
@@ -139,15 +144,15 @@ export const NewSuperpositionModal: React.FC<NewSuperpositionModalProps> = ({
       .filter((t) => t.length > 0);
 
     if (isConnectingFutureMode && connectingFutureNode) {
-      if (!sourceNodeId && !targetNodeId) return;
+      if (!activeSourceId && !activeTargetId) return;
       onConnectFutureNodeAsFact?.(
         connectingFutureNode.id,
         title.trim(),
         category,
         tags,
         {
-          sourceNodeId,
-          targetNodeId,
+          sourceNodeId: activeSourceId,
+          targetNodeId: activeTargetId,
           originBranchId,
         }
       );
@@ -159,14 +164,14 @@ export const NewSuperpositionModal: React.FC<NewSuperpositionModalProps> = ({
     const validBranches = branches.filter((b) => b.label.trim().length > 0);
 
     onCreateSuperposition(title.trim(), category, validBranches, tags, {
-      sourceNodeId,
-      targetNodeId,
+      sourceNodeId: activeSourceId,
+      targetNodeId: activeTargetId,
       originBranchId,
     });
   };
 
-  const isInsertingBetween = !!sourceNodeId && !!targetNodeId;
-  const isTipAddition = !!sourceNodeId && !targetNodeId;
+  const isInsertingBetween = !!activeSourceId && !!activeTargetId;
+  const isTipAddition = !!activeSourceId && !activeTargetId;
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
@@ -767,56 +772,14 @@ export const NewSuperpositionModal: React.FC<NewSuperpositionModalProps> = ({
               {/* 2. メインマップの量子・事実ノードリスト（未来の揺らぎは除外） */}
               {mainMapNodes.map((n) => {
                 const isSelected =
-                  pickerTarget === 'source' ? sourceNodeId === n.id : targetNodeId === n.id;
+                  pickerTarget === 'source' ? activeSourceId === n.id : activeTargetId === n.id;
                 const isOtherSelected =
-                  pickerTarget === 'source' ? targetNodeId === n.id : sourceNodeId === n.id;
+                  pickerTarget === 'source' ? activeTargetId === n.id : activeSourceId === n.id;
 
                 return (
-                  <button
+                  <div
                     key={n.id}
-                    type="button"
-                    onClick={() => {
-                      if (pickerTarget === 'source') {
-                        const defaultBranchId =
-                          n.actualizedBranchId || n.branches[0]?.id || null;
-                        setSourceNodeId(n.id);
-                        setOriginBranchId(defaultBranchId);
-                        if (targetNodeId === n.id) {
-                          setTargetNodeId(null);
-                        } else if (isConnectingFutureMode && !targetNodeId) {
-                          // 接続元を選択した際、その直後に繋がっている既存ノードがあれば自動的に接続先にセットして間に挿入しやすくする
-                          const nextChild = mainMapNodes.find(
-                            (c) =>
-                              c.parentId === n.id &&
-                              (!defaultBranchId ||
-                                c.originBranchId === defaultBranchId ||
-                                !c.originBranchId)
-                          );
-                          if (nextChild) {
-                            setTargetNodeId(nextChild.id);
-                          }
-                        }
-                      } else {
-                        setTargetNodeId(n.id);
-                        if (sourceNodeId === n.id) {
-                          setSourceNodeId(null);
-                        } else if (isConnectingFutureMode && !sourceNodeId && n.parentId) {
-                          // 接続先を選択した際、その親ノードがメインマップにあれば自動的に接続元にセットして間に挿入しやすくする
-                          const parentInMain = mainMapNodes.find((p) => p.id === n.parentId);
-                          if (parentInMain) {
-                            setSourceNodeId(parentInMain.id);
-                            setOriginBranchId(
-                              n.originBranchId ||
-                                parentInMain.actualizedBranchId ||
-                                parentInMain.branches[0]?.id ||
-                                null
-                            );
-                          }
-                        }
-                      }
-                      setPickerTarget(null);
-                    }}
-                    className={`w-full text-left p-2.5 rounded-xl border transition flex items-center justify-between ${
+                    className={`w-full p-2.5 rounded-xl border transition flex items-center justify-between gap-2 ${
                       isSelected
                         ? n.isFact
                           ? 'bg-emerald-950/50 border-emerald-500 text-white shadow-[0_0_10px_rgba(16,185,129,0.3)]'
@@ -824,7 +787,49 @@ export const NewSuperpositionModal: React.FC<NewSuperpositionModalProps> = ({
                         : 'bg-slate-950/40 border-slate-800 text-slate-300 hover:bg-slate-800/60 hover:border-slate-700'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 truncate">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (pickerTarget === 'source') {
+                          const defaultBranchId =
+                            n.actualizedBranchId || n.branches[0]?.id || null;
+                          setSourceNodeId(n.id);
+                          setOriginBranchId(defaultBranchId);
+                          if (targetNodeId === n.id) {
+                            setTargetNodeId(null);
+                          } else if (isConnectingFutureMode && !targetNodeId) {
+                            const nextChild = mainMapNodes.find(
+                              (c) =>
+                                c.parentId === n.id &&
+                                (!defaultBranchId ||
+                                  c.originBranchId === defaultBranchId ||
+                                  !c.originBranchId)
+                            );
+                            if (nextChild) {
+                              setTargetNodeId(nextChild.id);
+                            }
+                          }
+                        } else {
+                          setTargetNodeId(n.id);
+                          if (sourceNodeId === n.id) {
+                            setSourceNodeId(null);
+                          } else if (isConnectingFutureMode && !sourceNodeId && n.parentId) {
+                            const parentInMain = mainMapNodes.find((p) => p.id === n.parentId);
+                            if (parentInMain) {
+                              setSourceNodeId(parentInMain.id);
+                              setOriginBranchId(
+                                n.originBranchId ||
+                                  parentInMain.actualizedBranchId ||
+                                  parentInMain.branches[0]?.id ||
+                                  null
+                              );
+                            }
+                          }
+                        }
+                        setPickerTarget(null);
+                      }}
+                      className="flex-1 min-w-0 text-left flex items-center gap-2.5 truncate"
+                    >
                       <div
                         className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 ${
                           n.isFact
@@ -869,15 +874,38 @@ export const NewSuperpositionModal: React.FC<NewSuperpositionModalProps> = ({
                           )}
                         </div>
                       </div>
+                    </button>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {isSelected && (
+                        <Check
+                          className={`w-4 h-4 shrink-0 ${
+                            n.isFact ? 'text-emerald-400' : 'text-cyan-400'
+                          }`}
+                        />
+                      )}
+                      {onDeleteNode && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (sourceNodeId === n.id) {
+                              setSourceNodeId(null);
+                              setOriginBranchId(null);
+                            }
+                            if (targetNodeId === n.id) {
+                              setTargetNodeId(null);
+                            }
+                            onDeleteNode(n.id);
+                          }}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition"
+                          title="このノードを完全削除"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
-                    {isSelected && (
-                      <Check
-                        className={`w-4 h-4 shrink-0 ml-2 ${
-                          n.isFact ? 'text-emerald-400' : 'text-cyan-400'
-                        }`}
-                      />
-                    )}
-                  </button>
+                  </div>
                 );
               })}
             </div>

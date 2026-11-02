@@ -27,7 +27,7 @@ import {
   setActiveLifeId,
 } from './services/storageService';
 import { Header } from './components/Header';
-import { CosmicCanvas, getBranchLayout } from './components/CosmicCanvas';
+import { CosmicCanvas, getBranchLayout, normalizeMainMapLayout } from './components/CosmicCanvas';
 import { ObservationModal } from './components/ObservationModal';
 import { NewSuperpositionModal, ConnectionConfig } from './components/NewSuperpositionModal';
 import { Sparkles, Plus, ChevronDown, Trash2 } from 'lucide-react';
@@ -107,7 +107,7 @@ export default function App() {
       return;
     }
 
-    if (currentLifeId && currentView === 'space' && worldLine.nodes.length > 0) {
+    if (currentLifeId && currentView === 'space') {
       const existingLife = getLifeById(currentLifeId);
       if (existingLife) {
         const updatedLife: Life = {
@@ -129,11 +129,15 @@ export default function App() {
     branches: { label: string; description: string }[]
   ) => {
     const newLife = createNewLifeRecord(title, initialTheme, branches);
+    const normalizedWorldLine: QuantumWorldLine = {
+      ...newLife.worldLine,
+      nodes: normalizeMainMapLayout(newLife.worldLine.nodes),
+    };
     setLives(loadLives());
     setCurrentLifeId(newLife.id);
     setCurrentLifeTitle(newLife.title);
-    setWorldLine(newLife.worldLine);
-    setSelectedNodeId(newLife.worldLine.nodes[0]?.id || null);
+    setWorldLine(normalizedWorldLine);
+    setSelectedNodeId(normalizedWorldLine.nodes[0]?.id || null);
     setSelectedBranchId(null);
     setActiveLifeId(newLife.id);
     setCurrentView('space');
@@ -144,9 +148,13 @@ export default function App() {
   const handleResumeLife = (lifeId: string) => {
     const life = getLifeById(lifeId);
     if (life) {
+      const normalizedWorldLine: QuantumWorldLine = {
+        ...life.worldLine,
+        nodes: normalizeMainMapLayout(life.worldLine.nodes),
+      };
       setCurrentLifeId(life.id);
       setCurrentLifeTitle(life.title);
-      setWorldLine(life.worldLine);
+      setWorldLine(normalizedWorldLine);
       setSelectedNodeId(null); // 全体キャンバスをまず表示（ドロワーや作成画面を開かない）
       setSelectedBranchId(null);
       setSuperpositionModalConfig({
@@ -258,7 +266,7 @@ export default function App() {
       return {
         ...prev,
         totalQuanta: nextQuanta,
-        nodes: updatedNodes,
+        nodes: normalizeMainMapLayout(updatedNodes),
         logs: [newLog, ...prev.logs],
       };
     });
@@ -300,15 +308,14 @@ export default function App() {
       return {
         ...prev,
         totalQuanta: nextQuanta,
-        nodes: updatedNodes,
+        nodes: normalizeMainMapLayout(updatedNodes),
         logs: updatedLogs,
       };
     });
   };
 
-  // 過去に作成した量子・事実の削除機能
-  // 削除すると、該当の事実や量子（紐づいている可能性含む）が消去され、接続元と接続先が直接再接続される
-  // 消す量子の接続先がない場合は単純に削除する
+  // 過去に作成した量子・事実・未来の揺らぎの完全削除機能
+  // 削除すると、該当データの完全抹消を行い、接続元と接続先があれば直接再接続し、なければ単純に削除する
   const handleDeleteNode = (nodeId: string) => {
     setWorldLine((prev) => {
       const targetNode = prev.nodes.find((n) => n.id === nodeId);
@@ -322,94 +329,68 @@ export default function App() {
         parentNode?.branches[0]?.id ||
         undefined;
 
-      // 削除対象ノードを親としていた子ノード（接続先）とその子孫ノードを特定
-      const directChildren = prev.nodes.filter((n) => n.parentId === nodeId);
-      const descendantIds = new Set<string>();
-      const queue = directChildren.map((c) => c.id);
-      for (const cid of queue) {
-        descendantIds.add(cid);
-      }
-      while (queue.length > 0) {
-        const currId = queue.shift()!;
-        for (const n of prev.nodes) {
-          if (n.parentId === currId && !descendantIds.has(n.id)) {
-            descendantIds.add(n.id);
-            queue.push(n.id);
-          }
-        }
-      }
-
-      // 接続元がある場合のY座標計算（直接の子ノードのY座標を接続元の選択肢または事実に合わせる）
-      let reconnectedY: number | null = null;
-      if (parentNode) {
-        if (parentNode.branches.length > 0) {
-          let branchIdx = inheritedBranchId
-            ? parentNode.branches.findIndex((b) => b.id === inheritedBranchId)
-            : parentNode.branches.findIndex((b) => b.id === parentNode.actualizedBranchId);
-          if (branchIdx < 0) branchIdx = 0;
-          const branchPos = getBranchLayout(
-            parentNode.position.x,
-            parentNode.position.y,
-            branchIdx,
-            parentNode.branches.length
-          );
-          reconnectedY = branchPos.y;
-        } else {
-          reconnectedY = parentNode.position.y;
-        }
-      }
-
-      const deltaX = directChildren.length > 0
-        ? parentNode
-          ? (parentNode.position.x + 440) - directChildren[0].position.x
-          : targetNode.position.x - directChildren[0].position.x
-        : 0;
-
-      // 接続先がある場合は接続元と直接接続し、接続先がない場合は単純に削除する
-      const updatedNodes = prev.nodes
+      // 該当ノードを完全に抹消し、接続先がある場合は接続元と直接接続し、
+      // normalizeMainMapLayout で全ノード間のX軸接続長を一定値に再計算する
+      const reconnectedNodes = prev.nodes
         .filter((n) => n.id !== nodeId)
         .map((n) => {
           if (n.parentId === nodeId) {
             return {
               ...n,
               parentId: parentId,
-              // 削除されたノードの選択肢IDではなく、接続元（parentNode）の選択肢IDを引き継ぐ
               originBranchId: parentId ? inheritedBranchId : undefined,
-              position: {
-                x: n.position.x + deltaX,
-                y: reconnectedY !== null ? reconnectedY : n.position.y,
-              },
-            };
-          }
-          if (descendantIds.has(n.id)) {
-            return {
-              ...n,
-              position: {
-                ...n.position,
-                x: n.position.x + deltaX,
-              },
             };
           }
           return n;
         });
 
+      const updatedNodes = normalizeMainMapLayout(reconnectedNodes);
+
       const updatedLogs = prev.logs.filter(
         (l) => l.nodeId !== nodeId && l.quantumId !== targetNode.quantumLogId
+      );
+
+      const updatedEntanglements = prev.entanglements.filter(
+        (e) => e.sourceNodeId !== nodeId && e.targetNodeId !== nodeId
       );
 
       const wasObservedQuantum = targetNode.state === 'observed' && !targetNode.isFact;
       const nextQuanta = wasObservedQuantum ? Math.max(0, prev.totalQuanta - 1) : prev.totalQuanta;
 
-      return {
+      const nextWorldLine: QuantumWorldLine = {
         ...prev,
         totalQuanta: nextQuanta,
         nodes: updatedNodes,
         logs: updatedLogs,
+        entanglements: updatedEntanglements,
       };
+
+      // localStorage のデータも即時更新して削除データを完全抹消する
+      if (currentLifeId) {
+        const existingLife = getLifeById(currentLifeId);
+        if (existingLife) {
+          saveLife({
+            ...existingLife,
+            title: currentLifeTitle || existingLife.title,
+            totalQuanta: nextQuanta,
+            worldLine: nextWorldLine,
+          });
+        }
+      }
+
+      return nextWorldLine;
     });
 
-    setSelectedNodeId(null);
-    setSelectedBranchId(null);
+    setSelectedNodeId((prev) => (prev === nodeId ? null : prev));
+    setSelectedBranchId((prev) => (selectedNodeId === nodeId ? null : prev));
+    setObservationNode((prev) => (prev && prev.id === nodeId ? null : prev));
+    setSuperpositionModalConfig((prev) => ({
+      ...prev,
+      sourceNodeId: prev.sourceNodeId === nodeId ? null : prev.sourceNodeId,
+      targetNodeId: prev.targetNodeId === nodeId ? null : prev.targetNodeId,
+      connectingFutureNodeId:
+        prev.connectingFutureNodeId === nodeId ? null : prev.connectingFutureNodeId,
+    }));
   };
 
   // 決定（Decided）または量子ノードからのレトロアクティブ量子揺らぎ挿入またはNew Quantum
@@ -570,7 +551,7 @@ export default function App() {
 
       return {
         ...prev,
-        nodes: updatedNodes,
+        nodes: normalizeMainMapLayout(updatedNodes),
       };
     });
 
@@ -711,11 +692,11 @@ export default function App() {
       }
 
       // 2. メインマップ側の既存の接続先 (mainTarget) を特定
+      // 接続先が未指定でも、mainSource の該当選択肢に既に子ノードが繋がっていればその間に挿入して座標重複を防ぐ
       let mainTarget: OnigiriNode | null = null;
       if (targetNode && !targetNode.isFutureFluctuation) {
         mainTarget = targetNode;
-      } else if (mainSource && (targetNode?.isFutureFluctuation || sourceNode?.isFutureFluctuation)) {
-        // 接続先に「未来の揺らぎ」が指定された場合、mainSource の該当選択肢に既に繋がっている子ノードがあればその間に挿入する
+      } else if (mainSource) {
         mainTarget =
           prev.nodes.find(
             (n) =>
@@ -896,7 +877,7 @@ export default function App() {
 
       return {
         ...prev,
-        nodes: [...updatedNodes, finalNewNode],
+        nodes: normalizeMainMapLayout([...updatedNodes, finalNewNode]),
       };
     });
 
@@ -937,7 +918,7 @@ export default function App() {
         };
       });
 
-      return { ...prev, nodes: updatedNodes };
+      return { ...prev, nodes: normalizeMainMapLayout(updatedNodes) };
     });
   };
 
@@ -1281,6 +1262,7 @@ export default function App() {
           }}
           onCreateSuperposition={handleCreateSuperposition}
           onConnectFutureNodeAsFact={handleConnectFutureNodeAsFact}
+          onDeleteNode={handleDeleteNode}
         />
       )}
 

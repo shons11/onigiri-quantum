@@ -99,10 +99,20 @@ interface Star {
 }
 
 /**
+ * メインマップの固定レイアウト定数
+ * - すべての要素（量子・選択肢・揺らぎ・事実）を接続する線のX軸方向の長さを CONNECTOR_SPAN_X に完全固定
+ */
+export const CARD_WIDTH = 164;
+export const CONNECTOR_SPAN_X = 140;
+export const ROOT_NODE_X = 280;
+export const ROOT_NODE_Y = 340;
+
+/**
  * 各量子のブランチ配置計算
  * - 選択肢が1つの場合：X軸方向に平行（offsetY = 0）
  * - 選択肢が複数（n個）の場合：その分岐の右側を n+1 等分する方向
  * - 作成順（branchIndex: 0 ~ totalBranches - 1）に上から配置
+ * - 量子から選択肢/揺らぎカード左端までのX軸距離は CONNECTOR_SPAN_X で一定
  */
 export function getBranchLayout(
   nodeX: number,
@@ -111,7 +121,7 @@ export function getBranchLayout(
   totalBranches: number
 ) {
   const stepY = 80;
-  const branchDistX = 180;
+  const branchDistX = CONNECTOR_SPAN_X;
 
   if (totalBranches <= 1) {
     return {
@@ -129,6 +139,115 @@ export function getBranchLayout(
     y: nodeY + offsetY,
     offsetY,
   };
+}
+
+/**
+ * メインマップ内の全ノードの座標を正規化し、
+ * 量子・選択肢・揺らぎ・事実を接続するすべてのエッジのX軸方向の長さを CONNECTOR_SPAN_X に固定する
+ */
+export function normalizeMainMapLayout(nodes: OnigiriNode[]): OnigiriNode[] {
+  const mainNodes = nodes.filter((n) => !n.isFutureFluctuation);
+  if (mainNodes.length === 0) return nodes;
+
+  const mainIdSet = new Set(mainNodes.map((n) => n.id));
+  const positionedMap = new Map<string, OnigiriNode>();
+
+  // 親を持たない（または親がメインマップ上に存在しない）ルートノードを特定
+  const roots = mainNodes.filter((n) => !n.parentId || !mainIdSet.has(n.parentId));
+  const queue: OnigiriNode[] = [];
+
+  roots.forEach((root, idx) => {
+    const rootIsFact = Boolean(root.isFact || root.nodeType === 'fact' || root.branches.length === 0);
+    const positionedRoot: OnigiriNode = {
+      ...root,
+      isFact: rootIsFact,
+      nodeType: rootIsFact ? 'fact' : 'quantum',
+      parentId: null,
+      originBranchId: undefined,
+      position: {
+        x: ROOT_NODE_X,
+        y: root.position?.y ?? ROOT_NODE_Y + idx * 180,
+      },
+    };
+    positionedMap.set(positionedRoot.id, positionedRoot);
+    queue.push(positionedRoot);
+  });
+
+  // ルートから子孫へ向かってBFSでX/Y座標を確定
+  while (queue.length > 0) {
+    const parent = queue.shift()!;
+    const parentIsFact = Boolean(
+      parent.isFact || parent.nodeType === 'fact' || parent.branches.length === 0
+    );
+
+    // 親要素の右端（接続線の始点X）を算出
+    const parentOutX = parentIsFact
+      ? parent.position.x + CARD_WIDTH / 2
+      : parent.position.x + CONNECTOR_SPAN_X + CARD_WIDTH;
+
+    const children = mainNodes.filter(
+      (n) => n.parentId === parent.id && !positionedMap.has(n.id)
+    );
+
+    for (const child of children) {
+      const childIsFact = Boolean(
+        child.isFact || child.nodeType === 'fact' || child.branches.length === 0
+      );
+
+      let targetY = parent.position.y;
+      let resolvedOriginBranchId = child.originBranchId;
+
+      if (!parentIsFact && parent.branches.length > 0) {
+        const candidateBranchId =
+          child.originBranchId || parent.actualizedBranchId || parent.branches[0]?.id;
+        let branchIdx = candidateBranchId
+          ? parent.branches.findIndex((b) => b.id === candidateBranchId)
+          : 0;
+        if (branchIdx < 0) branchIdx = 0;
+        resolvedOriginBranchId = parent.branches[branchIdx]?.id;
+
+        const branchPos = getBranchLayout(
+          parent.position.x,
+          parent.position.y,
+          branchIdx,
+          parent.branches.length
+        );
+        targetY = branchPos.y;
+      } else {
+        resolvedOriginBranchId = undefined;
+      }
+
+      // 接続線のX軸長さが常に CONNECTOR_SPAN_X になるよう子ノードの中心X座標を算出
+      // - 子が事実 (Fact) の場合: 左端は childX - CARD_WIDTH / 2 なので childX = parentOutX + CONNECTOR_SPAN_X + CARD_WIDTH / 2
+      // - 子が量子 (Quantum) の場合: 接続終点は childX なので childX = parentOutX + CONNECTOR_SPAN_X
+      const childX = childIsFact
+        ? parentOutX + CONNECTOR_SPAN_X + CARD_WIDTH / 2
+        : parentOutX + CONNECTOR_SPAN_X;
+
+      const positionedChild: OnigiriNode = {
+        ...child,
+        isFact: childIsFact,
+        nodeType: childIsFact ? 'fact' : 'quantum',
+        originBranchId: resolvedOriginBranchId,
+        position: {
+          x: childX,
+          y: targetY,
+        },
+      };
+
+      positionedMap.set(positionedChild.id, positionedChild);
+      queue.push(positionedChild);
+    }
+  }
+
+  // 万一循環参照等で未処理のメインマップノードが残った場合のフォールバック
+  for (const node of mainNodes) {
+    if (!positionedMap.has(node.id)) {
+      positionedMap.set(node.id, node);
+    }
+  }
+
+  return nodes.map((n) => (n.isFutureFluctuation ? n : positionedMap.get(n.id) || n));
 }
 
 /**
@@ -331,8 +450,9 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
       // メインマップ上のノードのみ判定（未来の揺らぎは上部固定UIで管理）
       const mainMapNodes = nodes.filter((n) => !n.isFutureFluctuation);
 
-      // 1. ノード判定 (事実ボックスまたは量子オーブ)
-      for (const node of mainMapNodes) {
+      // 1. ノード判定 (事実ボックスまたは量子オーブ) - 描画順の逆（最前面のノード優先）で判定
+      for (let i = mainMapNodes.length - 1; i >= 0; i--) {
+        const node = mainMapNodes[i];
         if (node.isFact) {
           const cardW = 164;
           const cardH = 56;
@@ -359,11 +479,12 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = ({
         }
       }
 
-      // 2. ブランチ（選択肢枠）判定 (タッチ時はマージンを広げる)
+      // 2. ブランチ（選択肢枠）判定 (タッチ時はマージンを広げる) - 最前面優先
       const cardMargin = isTouch ? 10 : 6;
-      for (const node of mainMapNodes) {
+      for (let i = mainMapNodes.length - 1; i >= 0; i--) {
+        const node = mainMapNodes[i];
         const numBranches = node.branches.length;
-        for (let k = 0; k < numBranches; k++) {
+        for (let k = numBranches - 1; k >= 0; k--) {
           const branch = node.branches[k];
           const branchPos = getBranchLayout(node.position.x, node.position.y, k, numBranches);
           const isBranchSelected = selectedBranchId === branch.id;
